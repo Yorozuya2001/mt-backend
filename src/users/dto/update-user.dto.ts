@@ -32,6 +32,16 @@ export class UpdateUserDto {
   phone?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  locality?: string;
+
+  @IsOptional()
   @IsIn(['REGULAR', 'FRECUENTE'], {
     message: 'El tipo de comprador debe ser REGULAR o FRECUENTE',
   })

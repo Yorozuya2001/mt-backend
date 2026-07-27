@@ -37,6 +37,12 @@ enum StockMovementType {
   RETURN
 }
 
+enum PaymentMethod {
+  EFECTIVO
+  TRANSFERENCIA
+  TARJETA
+}
+
 model User {
   id                String          @id @default(uuid())
   email             String          @unique
@@ -45,6 +51,8 @@ model User {
   lastName          String          @default("")
   dni               String?         @unique @db.VarChar(20)
   phone             String?         @db.VarChar(30)
+  address           String?         @db.VarChar(160)
+  locality          String?         @db.VarChar(100)
   role              Role            @default(CLIENT)
   buyerType         BuyerType       @default(REGULAR)
   photoUrl          String?
@@ -53,6 +61,8 @@ model User {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   stockMovements    StockMovement[]
+  remitos           Remito[]        @relation("ClientRemitos")
+  issuedRemitos     Remito[]        @relation("IssuedRemitos")
 }
 
 model Category {
@@ -84,6 +94,7 @@ model Product {
   category       Category        @relation(fields: [categoryId], references: [id])
   images         ProductImage[]
   stockMovements StockMovement[]
+  remitoItems    RemitoItem[]
 
   @@index([categoryId])
   @@index([title])
@@ -115,4 +126,35 @@ model StockMovement {
 
   @@index([productId])
   @@index([createdAt])
+}
+
+model Remito {
+  id            String        @id @default(uuid())
+  number        Int           @unique @default(autoincrement())
+  clientId      String?
+  createdById   String
+  paymentMethod PaymentMethod
+  total         Decimal       @db.Decimal(12, 2)
+  notes         String?       @db.VarChar(255)
+  createdAt     DateTime      @default(now())
+  client        User?         @relation("ClientRemitos", fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy     User          @relation("IssuedRemitos", fields: [createdById], references: [id])
+  items         RemitoItem[]
+
+  @@index([clientId, createdAt])
+  @@index([createdAt])
+}
+
+model RemitoItem {
+  id          String   @id @default(uuid())
+  remitoId    String
+  productId   String?
+  description String   @db.VarChar(255)
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  subtotal    Decimal  @db.Decimal(12, 2)
+  remito      Remito   @relation(fields: [remitoId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([remitoId])
 }

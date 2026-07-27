@@ -3,12 +3,82 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ProductStatus, StockMovementType } from '../generated/prisma/client';
+import {
+  Prisma,
+  ProductStatus,
+  StockMovementType,
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+export type RegisterSaleInput = {
+  productId: string;
+  quantity: number;
+  userId: string;
+  reason?: string;
+};
 
 @Injectable()
 export class StockService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Descuenta stock por una venta dentro de una transaccion existente.
+   *
+   * El decremento relativo toma el lock de la fila y devuelve el stock real
+   * posterior, asi que dos cajas vendiendo el mismo producto en paralelo se
+   * serializan: si el resultado queda negativo la excepcion revierte toda la
+   * transaccion y nunca se sobrevende.
+   */
+  async registerSale(
+    tx: Prisma.TransactionClient,
+    { productId, quantity, userId, reason }: RegisterSaleInput,
+  ) {
+    const product = await this.decrementStock(tx, productId, quantity);
+
+    if (product.stock < 0)
+      throw new BadRequestException(
+        `Stock insuficiente para "${product.title}"`,
+      );
+
+    const status = this.resolveStatus(
+      product.stock,
+      product.minStock,
+      product.status,
+    );
+
+    if (status !== product.status)
+      await tx.product.update({ where: { id: productId }, data: { status } });
+
+    await tx.stockMovement.create({
+      data: {
+        productId,
+        type: StockMovementType.SALE,
+        quantity,
+        reason: reason ?? null,
+        createdById: userId,
+      },
+    });
+  }
+
+  private async decrementStock(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    quantity: number,
+  ) {
+    try {
+      return await tx.product.update({
+        where: { id: productId },
+        data: { stock: { decrement: quantity } },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      )
+        throw new NotFoundException('Producto no encontrado');
+      throw error;
+    }
+  }
 
   async adjust(
     productId: string,

@@ -21,6 +21,8 @@ export type CreateUserInput = {
   lastName?: string;
   dni?: string | null;
   phone?: string | null;
+  address?: string | null;
+  locality?: string | null;
   buyerType?: BuyerType;
 };
 
@@ -31,6 +33,8 @@ export type PublicUser = {
   lastName: string;
   dni: string | null;
   phone: string | null;
+  address: string | null;
+  locality: string | null;
   photoUrl: string | null;
   role: Role;
   buyerType: BuyerType;
@@ -54,6 +58,8 @@ export class UsersService {
       lastName: user.lastName,
       dni: user.dni,
       phone: user.phone,
+      address: user.address,
+      locality: user.locality,
       photoUrl: user.photoUrl,
       role: user.role,
       buyerType: user.buyerType,
@@ -106,6 +112,8 @@ export class UsersService {
         lastName: input.lastName ?? '',
         dni: input.dni ?? null,
         phone: input.phone ?? null,
+        address: input.address ?? null,
+        locality: input.locality ?? null,
         buyerType: input.buyerType ?? BuyerType.REGULAR,
         isEmailVerified: false,
       },
@@ -141,6 +149,8 @@ export class UsersService {
         lastName: dto.lastName,
         dni: dto.dni || null,
         phone: dto.phone || null,
+        address: dto.address || null,
+        locality: dto.locality || null,
         buyerType:
           targetRole === Role.CLIENT
             ? ((dto.buyerType as BuyerType | undefined) ?? BuyerType.REGULAR)
@@ -215,6 +225,9 @@ export class UsersService {
           lastName: dto.lastName,
           dni: dto.dni === undefined ? undefined : dto.dni || null,
           phone: dto.phone === undefined ? undefined : dto.phone || null,
+          address: dto.address === undefined ? undefined : dto.address || null,
+          locality:
+            dto.locality === undefined ? undefined : dto.locality || null,
           buyerType:
             dto.buyerType === undefined
               ? undefined
