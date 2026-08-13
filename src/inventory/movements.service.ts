@@ -28,6 +28,17 @@ export type PublicMovementListItem = {
     lastName: string;
     email: string;
   };
+  remito: {
+    id: string;
+    number: number;
+    clientId: string | null;
+    client: {
+      id: string;
+      name: string;
+      lastName: string;
+      email: string;
+    } | null;
+  } | null;
 };
 
 export type PaginatedMovements = {
@@ -59,6 +70,12 @@ type MovementWithRelations = StockMovement & {
     category: { name: string };
   };
   createdBy: Pick<User, 'id' | 'name' | 'lastName' | 'email'>;
+  remito: {
+    id: string;
+    number: number;
+    clientId: string | null;
+    client: Pick<User, 'id' | 'name' | 'lastName' | 'email'> | null;
+  } | null;
 };
 
 const MOVEMENT_INCLUDE = {
@@ -74,6 +91,16 @@ const MOVEMENT_INCLUDE = {
   },
   createdBy: {
     select: { id: true, name: true, lastName: true, email: true },
+  },
+  remito: {
+    select: {
+      id: true,
+      number: true,
+      clientId: true,
+      client: {
+        select: { id: true, name: true, lastName: true, email: true },
+      },
+    },
   },
 } satisfies Prisma.StockMovementInclude;
 
@@ -97,6 +124,7 @@ export class MovementsService {
         categoryName: movement.product.category.name,
       },
       createdBy: movement.createdBy,
+      remito: movement.remito,
     };
   }
 

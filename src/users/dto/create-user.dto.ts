@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsOptional,
@@ -6,15 +7,17 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateUserDto {
   @IsEmail()
   email: string;
 
+  @ValidateIf((dto: CreateUserDto) => dto.role === 'ADMIN')
   @IsString()
   @MinLength(6)
-  password: string;
+  password?: string;
 
   @IsString()
   @MaxLength(100)
@@ -47,14 +50,12 @@ export class CreateUserDto {
   locality?: string;
 
   @IsOptional()
-  @IsIn(['REGULAR', 'FRECUENTE'], {
-    message: 'El tipo de comprador debe ser REGULAR o FRECUENTE',
-  })
-  buyerType?: 'REGULAR' | 'FRECUENTE';
-
-  @IsOptional()
   @IsIn(['CLIENT', 'ADMIN'], {
     message: 'El rol debe ser CLIENT o ADMIN',
   })
   role?: 'CLIENT' | 'ADMIN';
+
+  @IsOptional()
+  @IsBoolean()
+  isWholesale?: boolean;
 }

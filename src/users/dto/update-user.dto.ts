@@ -1,5 +1,5 @@
 import {
-  IsIn,
+  IsBoolean,
   IsOptional,
   IsString,
   Matches,
@@ -42,8 +42,6 @@ export class UpdateUserDto {
   locality?: string;
 
   @IsOptional()
-  @IsIn(['REGULAR', 'FRECUENTE'], {
-    message: 'El tipo de comprador debe ser REGULAR o FRECUENTE',
-  })
-  buyerType?: 'REGULAR' | 'FRECUENTE';
+  @IsBoolean()
+  isWholesale?: boolean;
 }

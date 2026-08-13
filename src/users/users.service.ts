@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,7 +7,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
-import { Prisma, Role, User, BuyerType } from '../generated/prisma/client';
+import { Prisma, Role, User } from '../generated/prisma/client';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateUserDto } from './dto/create-user.dto';
@@ -15,7 +16,8 @@ import type { UpdateUserDto } from './dto/update-user.dto';
 export type CreateUserInput = {
   email: string;
   passwordHash: string;
-  verificationToken: string;
+  verificationToken?: string | null;
+  isEmailVerified?: boolean;
   role?: Role;
   name?: string;
   lastName?: string;
@@ -23,7 +25,7 @@ export type CreateUserInput = {
   phone?: string | null;
   address?: string | null;
   locality?: string | null;
-  buyerType?: BuyerType;
+  isWholesale?: boolean;
 };
 
 export type PublicUser = {
@@ -37,8 +39,8 @@ export type PublicUser = {
   locality: string | null;
   photoUrl: string | null;
   role: Role;
-  buyerType: BuyerType;
   isEmailVerified: boolean;
+  isWholesale: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -62,8 +64,8 @@ export class UsersService {
       locality: user.locality,
       photoUrl: user.photoUrl,
       role: user.role,
-      buyerType: user.buyerType,
       isEmailVerified: user.isEmailVerified,
+      isWholesale: user.isWholesale,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -106,7 +108,7 @@ export class UsersService {
       data: {
         email: input.email,
         password: input.passwordHash,
-        verificationToken: input.verificationToken,
+        verificationToken: input.verificationToken ?? null,
         role: input.role ?? Role.CLIENT,
         name: input.name ?? '',
         lastName: input.lastName ?? '',
@@ -114,8 +116,8 @@ export class UsersService {
         phone: input.phone ?? null,
         address: input.address ?? null,
         locality: input.locality ?? null,
-        buyerType: input.buyerType ?? BuyerType.REGULAR,
-        isEmailVerified: false,
+        isEmailVerified: input.isEmailVerified ?? false,
+        isWholesale: input.isWholesale ?? false,
       },
     });
   }
@@ -136,10 +138,42 @@ export class UsersService {
     if (existing)
       throw new ConflictException('Ya existe un usuario con ese email');
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-    const verificationToken = randomBytes(32).toString('hex');
+    const rawPassword =
+      dto.password ??
+      (targetRole === Role.CLIENT ? randomBytes(32).toString('hex') : undefined);
+
+    if (!rawPassword)
+      throw new BadRequestException(
+        'La contraseña es obligatoria para administradores',
+      );
+
+    const passwordHash = await bcrypt.hash(rawPassword, 10);
 
     try {
+      if (targetRole === Role.CLIENT) {
+        const user = await this.create({
+          email: dto.email,
+          passwordHash,
+          verificationToken: null,
+          isEmailVerified: true,
+          role: targetRole,
+          name: dto.name,
+          lastName: dto.lastName,
+          dni: dto.dni || null,
+          phone: dto.phone || null,
+          address: dto.address || null,
+          locality: dto.locality || null,
+          isWholesale:
+            targetRole === Role.CLIENT ? dto.isWholesale ?? false : false,
+        });
+
+        return {
+          user: this.toPublicUser(user),
+          message: 'Cliente creado correctamente.',
+        };
+      }
+
+      const verificationToken = randomBytes(32).toString('hex');
       const user = await this.create({
         email: dto.email,
         passwordHash,
@@ -151,10 +185,6 @@ export class UsersService {
         phone: dto.phone || null,
         address: dto.address || null,
         locality: dto.locality || null,
-        buyerType:
-          targetRole === Role.CLIENT
-            ? ((dto.buyerType as BuyerType | undefined) ?? BuyerType.REGULAR)
-            : BuyerType.REGULAR,
       });
 
       await this.mailService.sendVerificationEmail(
@@ -169,9 +199,7 @@ export class UsersService {
       };
     } catch (error) {
       if (this.isUniqueConstraintError(error))
-        throw new ConflictException(
-          'Ya existe un usuario con ese email o DNI',
-        );
+        throw this.toUniqueConstraintException(error);
       throw error;
     }
   }
@@ -228,16 +256,18 @@ export class UsersService {
           address: dto.address === undefined ? undefined : dto.address || null,
           locality:
             dto.locality === undefined ? undefined : dto.locality || null,
-          buyerType:
-            dto.buyerType === undefined
-              ? undefined
-              : (dto.buyerType as BuyerType),
+          isWholesale:
+            target.role === Role.CLIENT
+              ? dto.isWholesale
+              : dto.isWholesale === undefined
+                ? undefined
+                : false,
         },
       });
       return this.toPublicUser(updated);
     } catch (error) {
       if (this.isUniqueConstraintError(error))
-        throw new ConflictException('El DNI ya está en uso');
+        throw this.toUniqueConstraintException(error);
       throw error;
     }
   }
@@ -264,5 +294,19 @@ export class UsersService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
     );
+  }
+
+  toUniqueConstraintException(error: unknown): ConflictException {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      const target = error.meta?.target;
+      if (Array.isArray(target)) {
+        if (target.includes('email'))
+          return new ConflictException('Ya existe un usuario con ese email');
+        if (target.includes('dni'))
+          return new ConflictException('El DNI ya está en uso');
+      }
+    }
+
+    return new ConflictException('Ya existe un usuario con ese email o DNI');
   }
 }

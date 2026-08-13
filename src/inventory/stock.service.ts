@@ -15,6 +15,7 @@ export type RegisterSaleInput = {
   quantity: number;
   userId: string;
   reason?: string;
+  remitoId?: string;
 };
 
 @Injectable()
@@ -31,7 +32,7 @@ export class StockService {
    */
   async registerSale(
     tx: Prisma.TransactionClient,
-    { productId, quantity, userId, reason }: RegisterSaleInput,
+    { productId, quantity, userId, reason, remitoId }: RegisterSaleInput,
   ) {
     const product = await this.decrementStock(tx, productId, quantity);
 
@@ -55,6 +56,7 @@ export class StockService {
         type: StockMovementType.SALE,
         quantity,
         reason: reason ?? null,
+        remitoId: remitoId ?? null,
         createdById: userId,
       },
     });

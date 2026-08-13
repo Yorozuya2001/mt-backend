@@ -1,12 +1,6 @@
 import { fakerES as faker } from '@faker-js/faker';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
-import {
-  BuyerType,
-  Prisma,
-  PrismaClient,
-  Role,
-} from '../../src/generated/prisma/client';
+import { Prisma, PrismaClient, Role } from '../../src/generated/prisma/client';
 
 const CLIENT_COUNT = 150;
 const SEED_EMAIL_PREFIX = 'cliente.seed.';
@@ -17,20 +11,6 @@ type ProfileVariant = 'full' | 'phoneOnly' | 'minimal';
 
 function buildSeedEmail(index: number): string {
   return `${SEED_EMAIL_PREFIX}${String(index).padStart(3, '0')}@mt.local`;
-}
-
-function buildBuyerTypeDistribution(): BuyerType[] {
-  const types: BuyerType[] = [
-    ...Array.from({ length: 90 }, () => BuyerType.REGULAR),
-    ...Array.from({ length: 60 }, () => BuyerType.FRECUENTE),
-  ];
-
-  for (let i = types.length - 1; i > 0; i -= 1) {
-    const j = faker.number.int({ min: 0, max: i });
-    [types[i], types[j]] = [types[j], types[i]];
-  }
-
-  return types;
 }
 
 function buildProfileVariantDistribution(): ProfileVariant[] {
@@ -70,11 +50,9 @@ function generatePhone(): string {
 function buildClientRecord(
   index: number,
   passwordHash: string,
-  buyerType: BuyerType,
   profileVariant: ProfileVariant,
   usedDnis: Set<string>,
 ): Prisma.UserCreateManyInput {
-  const isEmailVerified = index <= 120;
   const hasPhoto = index % 7 === 0;
 
   const dni = profileVariant === 'full' ? generateUniqueDni(usedDnis) : null;
@@ -91,10 +69,9 @@ function buildClientRecord(
     dni,
     phone,
     role: Role.CLIENT,
-    buyerType,
     photoUrl: hasPhoto ? faker.image.avatar() : null,
-    isEmailVerified,
-    verificationToken: isEmailVerified ? null : randomBytes(32).toString('hex'),
+    isEmailVerified: true,
+    verificationToken: null,
   };
 }
 
@@ -104,14 +81,12 @@ export async function seedClients(prisma: PrismaClient): Promise<void> {
   });
 
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
-  const buyerTypes = buildBuyerTypeDistribution();
   const profileVariants = buildProfileVariantDistribution();
   const usedDnis = new Set<string>();
   const clients = Array.from({ length: CLIENT_COUNT }, (_, i) =>
     buildClientRecord(
       i + 1,
       passwordHash,
-      buyerTypes[i],
       profileVariants[i],
       usedDnis,
     ),
@@ -123,16 +98,8 @@ export async function seedClients(prisma: PrismaClient): Promise<void> {
     });
   }
 
-  const regularCount = clients.filter(
-    (client) => client.buyerType === BuyerType.REGULAR,
-  ).length;
-  const frecuenteCount = clients.filter(
-    (client) => client.buyerType === BuyerType.FRECUENTE,
-  ).length;
-
   console.log(
     `Seed clientes: borrados ${deleted.count}, creados ${CLIENT_COUNT}`,
   );
-  console.log(`  REGULAR: ${regularCount}, FRECUENTE: ${frecuenteCount}`);
   console.log(`  Password dev: ${SEED_PASSWORD}`);
 }

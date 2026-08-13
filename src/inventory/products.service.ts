@@ -49,7 +49,7 @@ export type PublicProduct = {
   presentation: string | null;
   brand: string | null;
   price: number;
-  discountPrice: number | null;
+  wholesalePrice: number | null;
   stock: number;
   minStock: number;
   status: ProductStatus;
@@ -88,7 +88,7 @@ export class ProductsService {
       presentation: product.presentation,
       brand: product.brand,
       price: decimalToNumber(product.price) ?? 0,
-      discountPrice: decimalToNumber(product.discountPrice),
+      wholesalePrice: decimalToNumber(product.wholesalePrice),
       stock: product.stock,
       minStock: product.minStock,
       status: product.status,
@@ -197,10 +197,10 @@ export class ProductsService {
           categoryId: dto.categoryId,
           title: dto.title.trim(),
           price: new Prisma.Decimal(dto.price),
-          discountPrice:
-            dto.discountPrice === undefined
+          wholesalePrice:
+            dto.wholesalePrice === undefined
               ? null
-              : new Prisma.Decimal(dto.discountPrice),
+              : new Prisma.Decimal(dto.wholesalePrice),
           description: dto.description?.trim() || null,
           presentation: dto.presentation?.trim() || null,
           brand: dto.brand?.trim() || null,
@@ -234,12 +234,12 @@ export class ProductsService {
           title: dto.title?.trim(),
           price:
             dto.price === undefined ? undefined : new Prisma.Decimal(dto.price),
-          discountPrice:
-            dto.discountPrice === undefined
+          wholesalePrice:
+            dto.wholesalePrice === undefined
               ? undefined
-              : dto.discountPrice === null
+              : dto.wholesalePrice === null
                 ? null
-                : new Prisma.Decimal(dto.discountPrice),
+                : new Prisma.Decimal(dto.wholesalePrice),
           description: dto.description,
           presentation: dto.presentation,
           brand: dto.brand,

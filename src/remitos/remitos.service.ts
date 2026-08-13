@@ -13,6 +13,7 @@ import {
   User,
 } from '../generated/prisma/client';
 import { StockService } from '../inventory/stock.service';
+import { resolveProductUnitPrice } from '../inventory/utils/pricing.utils';
 import { decimalToNumber } from '../inventory/utils/inventory.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -20,6 +21,10 @@ import type {
   CreateRemitoItemDto,
 } from './dto/create-remito.dto';
 import type { ListRemitosQueryDto } from './dto/list-remitos.query.dto';
+import {
+  RemitoSortBy,
+  RemitoSortOrder,
+} from './dto/list-remitos.query.dto';
 
 export type PublicRemitoItem = {
   id: string;
@@ -129,11 +134,13 @@ export class RemitosService {
     // amplia el limite por defecto de 5s de las transacciones interactivas.
     const remito = await this.prisma.$transaction(
       async (tx) => {
+        const applyWholesale = await this.resolveApplyWholesale(tx, dto.clientId);
         const products = await this.findLineProducts(tx, dto.items);
         const lines = dto.items.map((item) =>
           this.buildLine(
             item,
             item.productId ? products.get(item.productId) : undefined,
+            applyWholesale,
           ),
         );
         const total = lines.reduce(
@@ -160,6 +167,7 @@ export class RemitosService {
             quantity: line.quantity,
             userId: createdById,
             reason: `Remito X #${created.number}`,
+            remitoId: created.id,
           });
         }
 
@@ -174,16 +182,15 @@ export class RemitosService {
   async findMany(query: ListRemitosQueryDto): Promise<PaginatedRemitos> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where: Prisma.RemitoWhereInput = query.clientId
-      ? { clientId: query.clientId }
-      : {};
+    const where = this.buildWhere(query);
+    const orderBy = this.buildOrderBy(query);
 
     const [total, remitos] = await this.prisma.$transaction([
       this.prisma.remito.count({ where }),
       this.prisma.remito.findMany({
         where,
         include: REMITO_INCLUDE,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -196,6 +203,93 @@ export class RemitosService {
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     };
+  }
+
+  private buildWhere(query: ListRemitosQueryDto): Prisma.RemitoWhereInput {
+    const search = query.search?.trim();
+    const createdAt = this.buildDateRange(query.from, query.to);
+
+    const clientFilter: Prisma.RemitoWhereInput = query.finalConsumer
+      ? { clientId: null }
+      : query.hasClient
+        ? { clientId: { not: null } }
+        : query.clientId
+          ? { clientId: query.clientId }
+          : {};
+
+    const filters: Prisma.RemitoWhereInput[] = [clientFilter];
+
+    if (query.paymentMethod)
+      filters.push({ paymentMethod: query.paymentMethod });
+
+    if (query.productId)
+      filters.push({ items: { some: { productId: query.productId } } });
+
+    if (createdAt) filters.push({ createdAt });
+
+    if (search) {
+      const searchConditions: Prisma.RemitoWhereInput[] = [
+        { client: { name: { contains: search, mode: 'insensitive' } } },
+        { client: { lastName: { contains: search, mode: 'insensitive' } } },
+        { client: { email: { contains: search, mode: 'insensitive' } } },
+        { items: { some: { description: { contains: search, mode: 'insensitive' } } } },
+        {
+          items: {
+            some: {
+              product: { title: { contains: search, mode: 'insensitive' } },
+            },
+          },
+        },
+        {
+          items: {
+            some: {
+              product: { sku: { contains: search, mode: 'insensitive' } },
+            },
+          },
+        },
+      ];
+
+      const numericSearch = Number.parseInt(search.replace(/\D/g, ''), 10);
+      if (!Number.isNaN(numericSearch))
+        searchConditions.push({ number: numericSearch });
+
+      filters.push({ OR: searchConditions });
+    }
+
+    return filters.length === 1 ? filters[0] : { AND: filters };
+  }
+
+  private buildOrderBy(
+    query: ListRemitosQueryDto,
+  ): Prisma.RemitoOrderByWithRelationInput {
+    const sortBy = query.sortBy ?? RemitoSortBy.CREATED_AT;
+    const sortOrder = query.sortOrder ?? RemitoSortOrder.DESC;
+
+    if (sortBy === RemitoSortBy.NUMBER) return { number: sortOrder };
+    if (sortBy === RemitoSortBy.TOTAL) return { total: sortOrder };
+    return { createdAt: sortOrder };
+  }
+
+  /**
+   * `to` llega como fecha sin hora desde el filtro del front, por lo que se
+   * extiende al final del dia para que el rango sea inclusivo.
+   */
+  private buildDateRange(
+    from?: string,
+    to?: string,
+  ): Prisma.DateTimeFilter | undefined {
+    if (!from && !to) return undefined;
+
+    const range: Prisma.DateTimeFilter = {};
+    if (from) range.gte = new Date(from);
+
+    if (to) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      range.lte = end;
+    }
+
+    return range;
   }
 
   async findById(id: string): Promise<PublicRemito> {
@@ -246,7 +340,25 @@ export class RemitosService {
    * para productos del inventario se usa el precio vigente y para items
    * manuales el precio enviado, nunca el total calculado por el cliente.
    */
-  private buildLine(item: CreateRemitoItemDto, product?: Product): RemitoLine {
+  private async resolveApplyWholesale(
+    tx: Prisma.TransactionClient,
+    clientId?: string,
+  ): Promise<boolean> {
+    if (!clientId) return false;
+
+    const client = await tx.user.findUnique({
+      where: { id: clientId },
+      select: { isWholesale: true },
+    });
+
+    return client?.isWholesale ?? false;
+  }
+
+  private buildLine(
+    item: CreateRemitoItemDto,
+    product?: Product,
+    applyWholesale = false,
+  ): RemitoLine {
     if (!product) {
       const description = item.description?.trim();
       if (!description)
@@ -262,7 +374,7 @@ export class RemitosService {
       };
     }
 
-    const unitPrice = product.discountPrice ?? product.price;
+    const unitPrice = resolveProductUnitPrice(product, applyWholesale);
     return {
       productId: product.id,
       description: item.description?.trim() || product.title,
