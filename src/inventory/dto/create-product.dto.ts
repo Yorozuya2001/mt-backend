@@ -30,7 +30,7 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  discountPrice?: number;
+  wholesalePrice?: number;
 
   @IsOptional()
   @IsString()

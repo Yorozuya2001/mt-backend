@@ -1,59 +1,22 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
-import { MailService } from '../mail/mail.service';
+import { Role } from '../generated/prisma/client';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
 import type { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
-    private readonly mailService: MailService,
     private readonly jwtService: JwtService,
   ) {}
-
-  async register(dto: RegisterDto) {
-    const existing = await this.usersService.findByEmail(dto.email);
-    if (existing)
-      throw new ConflictException('Ya existe un usuario con ese email');
-
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-    const verificationToken = randomBytes(32).toString('hex');
-
-    try {
-      await this.usersService.create({
-        email: dto.email,
-        passwordHash,
-        verificationToken,
-        name: dto.name,
-        lastName: dto.lastName,
-      });
-    } catch (error) {
-      if (this.usersService.isUniqueConstraintError(error))
-        throw new ConflictException('Ya existe un usuario con ese email');
-      throw error;
-    }
-
-    await this.mailService.sendVerificationEmail(
-      dto.email,
-      verificationToken,
-    );
-
-    return {
-      message:
-        'Registro exitoso. Revisá tu correo para verificar la cuenta.',
-    };
-  }
 
   async verifyEmail(token: string) {
     if (!token?.trim())
@@ -79,6 +42,9 @@ export class AuthService {
     const passwordValid = await bcrypt.compare(dto.password, user.password);
     if (!passwordValid)
       throw new UnauthorizedException('Credenciales inválidas');
+
+    if (user.role === Role.CLIENT)
+      throw new ForbiddenException('Los clientes no pueden iniciar sesión.');
 
     if (!user.isEmailVerified)
       throw new ForbiddenException(

@@ -6,6 +6,8 @@ import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { RemitosModule } from './remitos/remitos.module';
+import { ReportsModule } from './reports/reports.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -14,6 +16,8 @@ import { UsersModule } from './users/users.module';
     PrismaModule,
     UsersModule,
     InventoryModule,
+    RemitosModule,
+    ReportsModule,
     MailModule,
     AuthModule,
   ],

@@ -34,7 +34,7 @@ export class UpdateProductDto {
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  discountPrice?: number | null;
+  wholesalePrice?: number | null;
 
   @IsOptional()
   @IsString()
