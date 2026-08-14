@@ -5,8 +5,6 @@ import { Prisma, PrismaClient, Role } from '../../src/generated/prisma/client';
 const CLIENT_COUNT = 150;
 const SEED_EMAIL_PREFIX = 'cliente.seed.';
 const SEED_PASSWORD = 'Cliente123!';
-const SUPERADMIN_EMAIL = 'superadmin@mt.local';
-const SUPERADMIN_PASSWORD = 'SuperAdmin123!';
 const BATCH_SIZE = 50;
 
 type ProfileVariant = 'full' | 'phoneOnly' | 'minimal';
@@ -78,8 +76,6 @@ function buildClientRecord(
 }
 
 export async function seedClients(prisma: PrismaClient): Promise<void> {
-  await seedSuperAdmin(prisma);
-
   const deleted = await prisma.user.deleteMany({
     where: { email: { startsWith: SEED_EMAIL_PREFIX } },
   });
@@ -87,6 +83,8 @@ export async function seedClients(prisma: PrismaClient): Promise<void> {
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
   const profileVariants = buildProfileVariantDistribution();
   const usedDnis = new Set<string>();
+
+
   const clients = Array.from({ length: CLIENT_COUNT }, (_, i) =>
     buildClientRecord(
       i + 1,
@@ -105,5 +103,5 @@ export async function seedClients(prisma: PrismaClient): Promise<void> {
   console.log(
     `Seed clientes: borrados ${deleted.count}, creados ${CLIENT_COUNT}`,
   );
-  console.log(`  Password dev: ${SEED_PASSWORD}`);
+  console.log(`  Password clientes: ${SEED_PASSWORD}`);
 }

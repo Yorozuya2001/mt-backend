@@ -8,6 +8,7 @@ import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RemitosModule } from './remitos/remitos.module';
 import { ReportsModule } from './reports/reports.module';
+import { SystemModule } from './system/system.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -18,6 +19,7 @@ import { UsersModule } from './users/users.module';
     InventoryModule,
     RemitosModule,
     ReportsModule,
+    SystemModule,
     MailModule,
     AuthModule,
   ],
