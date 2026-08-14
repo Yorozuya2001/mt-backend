@@ -11,6 +11,8 @@ import {
 const CLIENT_COUNT = 150;
 const SEED_EMAIL_PREFIX = 'cliente.seed.';
 const SEED_PASSWORD = 'Cliente123!';
+const SUPERADMIN_EMAIL = 'superadmin@mt.local';
+const SUPERADMIN_PASSWORD = 'SuperAdmin123!';
 const BATCH_SIZE = 50;
 
 type ProfileVariant = 'full' | 'phoneOnly' | 'minimal';
@@ -98,7 +100,36 @@ function buildClientRecord(
   };
 }
 
+async function seedSuperAdmin(prisma: PrismaClient): Promise<void> {
+  const passwordHash = await bcrypt.hash(SUPERADMIN_PASSWORD, 10);
+
+  await prisma.user.upsert({
+    where: { email: SUPERADMIN_EMAIL },
+    update: {
+      password: passwordHash,
+      name: 'Super',
+      lastName: 'Admin',
+      role: Role.SUPERADMIN,
+      isEmailVerified: true,
+      verificationToken: null,
+    },
+    create: {
+      email: SUPERADMIN_EMAIL,
+      password: passwordHash,
+      name: 'Super',
+      lastName: 'Admin',
+      role: Role.SUPERADMIN,
+      buyerType: BuyerType.REGULAR,
+      isEmailVerified: true,
+    },
+  });
+
+  console.log(`Seed SUPERADMIN: ${SUPERADMIN_EMAIL} / ${SUPERADMIN_PASSWORD}`);
+}
+
 export async function seedClients(prisma: PrismaClient): Promise<void> {
+  await seedSuperAdmin(prisma);
+
   const deleted = await prisma.user.deleteMany({
     where: { email: { startsWith: SEED_EMAIL_PREFIX } },
   });
@@ -134,5 +165,5 @@ export async function seedClients(prisma: PrismaClient): Promise<void> {
     `Seed clientes: borrados ${deleted.count}, creados ${CLIENT_COUNT}`,
   );
   console.log(`  REGULAR: ${regularCount}, FRECUENTE: ${frecuenteCount}`);
-  console.log(`  Password dev: ${SEED_PASSWORD}`);
+  console.log(`  Password clientes: ${SEED_PASSWORD}`);
 }
