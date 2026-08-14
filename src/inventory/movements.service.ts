@@ -13,6 +13,7 @@ export type PublicMovementListItem = {
   type: StockMovementType;
   quantity: number;
   reason: string | null;
+  voidedAt: Date | null;
   createdAt: Date;
   product: {
     id: string;
@@ -32,6 +33,7 @@ export type PublicMovementListItem = {
     id: string;
     number: number;
     clientId: string | null;
+    voidedAt: Date | null;
     client: {
       id: string;
       name: string;
@@ -74,6 +76,7 @@ type MovementWithRelations = StockMovement & {
     id: string;
     number: number;
     clientId: string | null;
+    voidedAt: Date | null;
     client: Pick<User, 'id' | 'name' | 'lastName' | 'email'> | null;
   } | null;
 };
@@ -97,6 +100,7 @@ const MOVEMENT_INCLUDE = {
       id: true,
       number: true,
       clientId: true,
+      voidedAt: true,
       client: {
         select: { id: true, name: true, lastName: true, email: true },
       },
@@ -114,6 +118,7 @@ export class MovementsService {
       type: movement.type,
       quantity: movement.quantity,
       reason: movement.reason,
+      voidedAt: movement.voidedAt,
       createdAt: movement.createdAt,
       product: {
         id: movement.product.id,
@@ -155,7 +160,7 @@ export class MovementsService {
   }
 
   async summary(query: ListMovementsQueryDto): Promise<MovementsSummary> {
-    const where = this.buildWhere(query);
+    const where = this.buildWhere(query, { excludeVoided: true });
 
     const grouped = await this.prisma.stockMovement.groupBy({
       by: ['type'],
@@ -178,6 +183,7 @@ export class MovementsService {
 
   private buildWhere(
     query: ListMovementsQueryDto,
+    options?: { excludeVoided?: boolean },
   ): Prisma.StockMovementWhereInput {
     const search = query.search?.trim();
     const createdAt = this.buildDateRange(query.from, query.to);
@@ -190,6 +196,7 @@ export class MovementsService {
         ? { product: { categoryId: query.categoryId } }
         : {}),
       ...(createdAt ? { createdAt } : {}),
+      ...(options?.excludeVoided ? { voidedAt: null } : {}),
       ...(search
         ? {
             OR: [

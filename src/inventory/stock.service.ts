@@ -18,17 +18,20 @@ export type RegisterSaleInput = {
   remitoId?: string;
 };
 
+export type RegisterReturnInput = {
+  productId: string;
+  quantity: number;
+  userId: string;
+  reason?: string;
+  remitoId?: string;
+};
+
 @Injectable()
 export class StockService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
    * Descuenta stock por una venta dentro de una transaccion existente.
-   *
-   * El decremento relativo toma el lock de la fila y devuelve el stock real
-   * posterior, asi que dos cajas vendiendo el mismo producto en paralelo se
-   * serializan: si el resultado queda negativo la excepcion revierte toda la
-   * transaccion y nunca se sobrevende.
    */
   async registerSale(
     tx: Prisma.TransactionClient,
@@ -62,6 +65,93 @@ export class StockService {
     });
   }
 
+  async registerReturn(
+    tx: Prisma.TransactionClient,
+    { productId, quantity, userId, reason, remitoId }: RegisterReturnInput,
+  ) {
+    const product = await this.incrementStock(tx, productId, quantity);
+
+    const status = this.resolveStatus(
+      product.stock,
+      product.minStock,
+      product.status,
+    );
+
+    if (status !== product.status)
+      await tx.product.update({ where: { id: productId }, data: { status } });
+
+    await tx.stockMovement.create({
+      data: {
+        productId,
+        type: StockMovementType.RETURN,
+        quantity,
+        reason: reason ?? null,
+        remitoId: remitoId ?? null,
+        createdById: userId,
+      },
+    });
+  }
+
+  async voidMovement(movementId: string, userId: string, reason?: string) {
+    const movement = await this.prisma.stockMovement.findUnique({
+      where: { id: movementId },
+      include: { product: true },
+    });
+
+    if (!movement) throw new NotFoundException('Movimiento no encontrado');
+    if (movement.voidedAt)
+      throw new BadRequestException('El movimiento ya fue anulado');
+    if (movement.type === StockMovementType.SALE)
+      throw new BadRequestException(
+        'Las ventas se anulan desde el remito asociado',
+      );
+
+    const product = movement.product;
+    let nextStock = product.stock;
+
+    if (movement.type === StockMovementType.IN)
+      nextStock = product.stock - movement.quantity;
+    else if (movement.type === StockMovementType.OUT)
+      nextStock = product.stock + movement.quantity;
+    else if (movement.type === StockMovementType.RETURN)
+      nextStock = product.stock - movement.quantity;
+    else if (movement.type === StockMovementType.ADJUSTMENT) {
+      if (movement.previousStock == null)
+        throw new BadRequestException(
+          'No se puede anular este ajuste por falta de historial',
+        );
+      nextStock = movement.previousStock;
+    }
+
+    if (nextStock < 0)
+      throw new BadRequestException(
+        'Stock insuficiente para anular este movimiento',
+      );
+
+    const status = this.resolveStatus(
+      nextStock,
+      product.minStock,
+      product.status,
+    );
+
+    await this.prisma.$transaction([
+      this.prisma.stockMovement.update({
+        where: { id: movementId },
+        data: {
+          voidedAt: new Date(),
+          voidedById: userId,
+          reason: reason?.trim() || movement.reason,
+        },
+      }),
+      this.prisma.product.update({
+        where: { id: product.id },
+        data: { stock: nextStock, status },
+      }),
+    ]);
+
+    return { id: movementId, voidedAt: new Date() };
+  }
+
   private async decrementStock(
     tx: Prisma.TransactionClient,
     productId: string,
@@ -71,6 +161,26 @@ export class StockService {
       return await tx.product.update({
         where: { id: productId },
         data: { stock: { decrement: quantity } },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      )
+        throw new NotFoundException('Producto no encontrado');
+      throw error;
+    }
+  }
+
+  private async incrementStock(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    quantity: number,
+  ) {
+    try {
+      return await tx.product.update({
+        where: { id: productId },
+        data: { stock: { increment: quantity } },
       });
     } catch (error) {
       if (
@@ -96,8 +206,10 @@ export class StockService {
 
     let nextStock: number;
     let movementQuantity: number;
+    let previousStock: number | null = null;
 
     if (type === StockMovementType.ADJUSTMENT) {
+      previousStock = product.stock;
       nextStock = quantity;
       movementQuantity = Math.abs(nextStock - product.stock);
     } else {
@@ -118,6 +230,7 @@ export class StockService {
           type,
           quantity: movementQuantity,
           reason: reason ?? null,
+          previousStock,
           createdById: userId,
         },
       }),

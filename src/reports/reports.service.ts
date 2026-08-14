@@ -56,82 +56,64 @@ export class ReportsService {
       createdAt: { gte: start, lt: end },
     };
 
-    const [
-      paymentGrouped,
-      remitosForHours,
-      remitoItems,
-      lowStockProducts,
-      criticalStockProducts,
-    ] = await this.prisma.$transaction([
-      this.prisma.remito.groupBy({
-        by: ['paymentMethod'],
-        where: remitoWhere,
-        orderBy: { paymentMethod: 'asc' },
-        _count: { _all: true },
-        _sum: { total: true },
-      }),
-      this.prisma.remito.findMany({
-        where: remitoWhere,
-        select: { total: true, createdAt: true },
-      }),
-      this.prisma.remitoItem.findMany({
-        where: {
-          productId: { not: null },
-          remito: { createdAt: { gte: start, lt: end } },
-        },
-        select: {
-          productId: true,
-          quantity: true,
-          subtotal: true,
-          product: { select: { title: true } },
-        },
-      }),
-      this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          status: ProductStatus.LOW_STOCK,
-        },
-        select: {
-          id: true,
-          title: true,
-          stock: true,
-          minStock: true,
-        },
-        orderBy: { stock: 'asc' },
-      }),
-      this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          stock: 1,
-          status: { not: ProductStatus.DISCONTINUED },
-        },
-        select: {
-          id: true,
-          title: true,
-          stock: true,
-          minStock: true,
-        },
-        orderBy: { title: 'asc' },
-      }),
-    ]);
+    const [remitos, lowStockProducts, criticalStockProducts] =
+      await this.prisma.$transaction([
+        this.prisma.remito.findMany({
+          where: remitoWhere,
+          select: {
+            paymentMethod: true,
+            total: true,
+            createdAt: true,
+            voidedAt: true,
+            items: {
+              select: {
+                productId: true,
+                quantity: true,
+                returnedQuantity: true,
+                unitPrice: true,
+                subtotal: true,
+                product: { select: { title: true } },
+              },
+            },
+          },
+        }),
+        this.prisma.product.findMany({
+          where: {
+            isActive: true,
+            status: ProductStatus.LOW_STOCK,
+          },
+          select: {
+            id: true,
+            title: true,
+            stock: true,
+            minStock: true,
+          },
+          orderBy: { stock: 'asc' },
+        }),
+        this.prisma.product.findMany({
+          where: {
+            isActive: true,
+            stock: 1,
+            status: { not: ProductStatus.DISCONTINUED },
+          },
+          select: {
+            id: true,
+            title: true,
+            stock: true,
+            minStock: true,
+          },
+          orderBy: { title: 'asc' },
+        }),
+      ]);
 
-    const byPaymentMethod = this.mapPaymentMethods(
-      paymentGrouped as Array<{
-        paymentMethod: PaymentMethod;
-        _count: { _all: number };
-        _sum: { total: Prisma.Decimal | null };
-      }>,
-    );
+    const byPaymentMethod = this.aggregatePaymentMethods(remitos);
     const totalAmount = byPaymentMethod.reduce(
       (acc, entry) => acc + entry.amount,
       0,
     );
-    const totalCount = byPaymentMethod.reduce(
-      (acc, entry) => acc + entry.count,
-      0,
-    );
-    const byHour = this.aggregateByHour(remitosForHours);
-    const topProducts = this.aggregateTopProducts(remitoItems);
+    const totalCount = remitos.filter((remito) => !remito.voidedAt).length;
+    const byHour = this.aggregateByHour(remitos);
+    const topProducts = this.aggregateTopProducts(remitos);
 
     const mappedLowStock = lowStockProducts.map((product) => ({
       id: product.id,
@@ -172,23 +154,54 @@ export class ReportsService {
     };
   }
 
-  private mapPaymentMethods(
-    grouped: Array<{
+  private getRemitoNetTotal(
+    remito: {
+      voidedAt: Date | null;
+      total: Prisma.Decimal;
+      items: Array<{
+        returnedQuantity: number;
+        unitPrice: Prisma.Decimal;
+      }>;
+    },
+  ): number {
+    if (remito.voidedAt) return 0;
+
+    const returnedAmount = remito.items.reduce(
+      (acc, item) =>
+        acc + (decimalToNumber(item.unitPrice) ?? 0) * item.returnedQuantity,
+      0,
+    );
+
+    return Math.max(0, (decimalToNumber(remito.total) ?? 0) - returnedAmount);
+  }
+
+  private aggregatePaymentMethods(
+    remitos: Array<{
       paymentMethod: PaymentMethod;
-      _count: { _all: number };
-      _sum: { total: Prisma.Decimal | null };
+      total: Prisma.Decimal;
+      voidedAt: Date | null;
+      items: Array<{
+        returnedQuantity: number;
+        unitPrice: Prisma.Decimal;
+      }>;
     }>,
   ): DailyReportPaymentEntry[] {
-    const byMethod = new Map(
-      grouped.map((group) => [
-        group.paymentMethod,
-        {
-          method: group.paymentMethod,
-          count: group._count._all,
-          amount: decimalToNumber(group._sum.total) ?? 0,
-        },
-      ]),
-    );
+    const byMethod = new Map<PaymentMethod, DailyReportPaymentEntry>();
+
+    for (const remito of remitos) {
+      if (remito.voidedAt) continue;
+
+      const net = this.getRemitoNetTotal(remito);
+      const current = byMethod.get(remito.paymentMethod) ?? {
+        method: remito.paymentMethod,
+        count: 0,
+        amount: 0,
+      };
+
+      current.count += 1;
+      current.amount += net;
+      byMethod.set(remito.paymentMethod, current);
+    }
 
     return PAYMENT_METHODS.map(
       (method) =>
@@ -197,7 +210,15 @@ export class ReportsService {
   }
 
   private aggregateByHour(
-    remitos: Array<{ total: Prisma.Decimal; createdAt: Date }>,
+    remitos: Array<{
+      total: Prisma.Decimal;
+      createdAt: Date;
+      voidedAt: Date | null;
+      items: Array<{
+        returnedQuantity: number;
+        unitPrice: Prisma.Decimal;
+      }>;
+    }>,
   ): DailyReportHourEntry[] {
     const buckets = Array.from({ length: 24 }, (_, hour) => ({
       hour,
@@ -206,42 +227,55 @@ export class ReportsService {
     }));
 
     for (const remito of remitos) {
+      if (remito.voidedAt) continue;
+
       const hour = remito.createdAt.getHours();
       buckets[hour].count += 1;
-      buckets[hour].amount += decimalToNumber(remito.total) ?? 0;
+      buckets[hour].amount += this.getRemitoNetTotal(remito);
     }
 
     return buckets;
   }
 
   private aggregateTopProducts(
-    items: Array<{
-      productId: string | null;
-      quantity: number;
-      subtotal: Prisma.Decimal;
-      product: { title: string } | null;
+    remitos: Array<{
+      voidedAt: Date | null;
+      items: Array<{
+        productId: string | null;
+        quantity: number;
+        returnedQuantity: number;
+        unitPrice: Prisma.Decimal;
+        product: { title: string } | null;
+      }>;
     }>,
   ): DailyReportTopProduct[] {
     const aggregated = new Map<string, DailyReportTopProduct>();
 
-    for (const item of items) {
-      if (!item.productId) continue;
+    for (const remito of remitos) {
+      if (remito.voidedAt) continue;
 
-      const existing = aggregated.get(item.productId);
-      const amount = decimalToNumber(item.subtotal) ?? 0;
+      for (const item of remito.items) {
+        if (!item.productId) continue;
 
-      if (existing) {
-        existing.quantity += item.quantity;
-        existing.amount += amount;
-        continue;
+        const netQty = item.quantity - item.returnedQuantity;
+        if (netQty <= 0) continue;
+
+        const amount = (decimalToNumber(item.unitPrice) ?? 0) * netQty;
+        const existing = aggregated.get(item.productId);
+
+        if (existing) {
+          existing.quantity += netQty;
+          existing.amount += amount;
+          continue;
+        }
+
+        aggregated.set(item.productId, {
+          productId: item.productId,
+          title: item.product?.title ?? 'Producto',
+          quantity: netQty,
+          amount,
+        });
       }
-
-      aggregated.set(item.productId, {
-        productId: item.productId,
-        title: item.product?.title ?? 'Producto',
-        quantity: item.quantity,
-        amount,
-      });
     }
 
     return [...aggregated.values()]

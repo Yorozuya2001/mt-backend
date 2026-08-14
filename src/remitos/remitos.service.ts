@@ -31,6 +31,7 @@ export type PublicRemitoItem = {
   productId: string | null;
   description: string;
   quantity: number;
+  returnedQuantity: number;
   unitPrice: number;
   subtotal: number;
 };
@@ -50,6 +51,8 @@ export type PublicRemito = {
   paymentMethod: PaymentMethod;
   total: number;
   notes: string | null;
+  voidedAt: Date | null;
+  voidReason: string | null;
   createdAt: Date;
   client: PublicRemitoClient | null;
   createdBy: { id: string; name: string; lastName: string } | null;
@@ -110,6 +113,8 @@ export class RemitosService {
       paymentMethod: remito.paymentMethod,
       total: decimalToNumber(remito.total) ?? 0,
       notes: remito.notes,
+      voidedAt: remito.voidedAt,
+      voidReason: remito.voidReason,
       createdAt: remito.createdAt,
       client: remito.client,
       createdBy: remito.createdBy,
@@ -118,6 +123,7 @@ export class RemitosService {
         productId: item.productId,
         description: item.description,
         quantity: item.quantity,
+        returnedQuantity: item.returnedQuantity,
         unitPrice: decimalToNumber(item.unitPrice) ?? 0,
         subtotal: decimalToNumber(item.subtotal) ?? 0,
       })),
@@ -299,6 +305,123 @@ export class RemitosService {
     });
     if (!remito) throw new NotFoundException('Remito no encontrado');
     return this.toPublicRemito(remito);
+  }
+
+  async returnItems(
+    remitoId: string,
+    userId: string,
+    items: Array<{ remitoItemId: string; quantity: number }>,
+    reason?: string,
+  ): Promise<PublicRemito> {
+    const remito = await this.prisma.remito.findUnique({
+      where: { id: remitoId },
+      include: { items: true },
+    });
+    if (!remito) throw new NotFoundException('Remito no encontrado');
+    if (remito.voidedAt)
+      throw new BadRequestException('El remito ya fue anulado');
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const line of items) {
+        const item = remito.items.find((entry) => entry.id === line.remitoItemId);
+        if (!item)
+          throw new BadRequestException('Ítem de remito no encontrado');
+
+        const remaining = item.quantity - item.returnedQuantity;
+        if (line.quantity > remaining)
+          throw new BadRequestException(
+            `Cantidad inválida para "${item.description}"`,
+          );
+
+        if (item.productId) {
+          await this.stockService.registerReturn(tx, {
+            productId: item.productId,
+            quantity: line.quantity,
+            userId,
+            remitoId: remito.id,
+            reason:
+              reason?.trim() ||
+              `Devolución remito X #${remito.number}`,
+          });
+        }
+
+        const subtotal = item.unitPrice.mul(line.quantity);
+
+        await tx.remitoReturn.create({
+          data: {
+            remitoId: remito.id,
+            remitoItemId: item.id,
+            quantity: line.quantity,
+            subtotal,
+            reason: reason?.trim() || null,
+            createdById: userId,
+          },
+        });
+
+        await tx.remitoItem.update({
+          where: { id: item.id },
+          data: { returnedQuantity: { increment: line.quantity } },
+        });
+      }
+    });
+
+    return this.findById(remitoId);
+  }
+
+  async void(remitoId: string, userId: string, reason?: string): Promise<PublicRemito> {
+    const remito = await this.prisma.remito.findUnique({
+      where: { id: remitoId },
+      include: { items: true },
+    });
+    if (!remito) throw new NotFoundException('Remito no encontrado');
+    if (remito.voidedAt)
+      throw new BadRequestException('El remito ya fue anulado');
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of remito.items) {
+        const remaining = item.quantity - item.returnedQuantity;
+        if (remaining <= 0 || !item.productId) continue;
+
+        await this.stockService.registerReturn(tx, {
+          productId: item.productId,
+          quantity: remaining,
+          userId,
+          remitoId: remito.id,
+          reason:
+            reason?.trim() ||
+            `Anulación remito X #${remito.number}`,
+        });
+
+        const subtotal = item.unitPrice.mul(remaining);
+
+        await tx.remitoReturn.create({
+          data: {
+            remitoId: remito.id,
+            remitoItemId: item.id,
+            quantity: remaining,
+            subtotal,
+            reason: reason?.trim() || null,
+            createdById: userId,
+          },
+        });
+
+        await tx.remitoItem.update({
+          where: { id: item.id },
+          data: { returnedQuantity: item.quantity },
+        });
+      }
+
+      await tx.remito.update({
+        where: { id: remitoId },
+        data: {
+          voidedAt: new Date(),
+          voidedById: userId,
+          voidReason: reason?.trim() || null,
+        },
+      });
+    });
+
+    return this.findById(remitoId);
   }
 
   private async ensureClientExists(clientId?: string) {

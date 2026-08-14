@@ -58,6 +58,9 @@ model User {
   stockMovements    StockMovement[]
   remitos           Remito[]        @relation("ClientRemitos")
   issuedRemitos     Remito[]        @relation("IssuedRemitos")
+  voidedRemitos     Remito[]        @relation("VoidedRemitos")
+  voidedMovements   StockMovement[] @relation("VoidedMovements")
+  remitoReturns     RemitoReturn[]
 }
 
 model Category {
@@ -109,17 +112,21 @@ model ProductImage {
 }
 
 model StockMovement {
-  id          String            @id @default(uuid())
-  productId   String
-  type        StockMovementType
-  quantity    Int
-  reason      String?           @db.VarChar(255)
-  remitoId    String?
-  createdById String
-  createdAt   DateTime          @default(now())
-  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
-  remito      Remito?           @relation(fields: [remitoId], references: [id], onDelete: SetNull)
-  createdBy   User              @relation(fields: [createdById], references: [id])
+  id            String            @id @default(uuid())
+  productId     String
+  type          StockMovementType
+  quantity      Int
+  reason        String?           @db.VarChar(255)
+  remitoId      String?
+  previousStock Int?
+  voidedAt      DateTime?
+  voidedById    String?
+  createdById   String
+  createdAt     DateTime          @default(now())
+  product       Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  remito        Remito?           @relation(fields: [remitoId], references: [id], onDelete: SetNull)
+  createdBy     User              @relation(fields: [createdById], references: [id])
+  voidedBy      User?             @relation("VoidedMovements", fields: [voidedById], references: [id])
 
   @@index([productId])
   @@index([createdAt])
@@ -127,33 +134,57 @@ model StockMovement {
 }
 
 model Remito {
-  id            String        @id @default(uuid())
-  number        Int           @unique @default(autoincrement())
-  clientId      String?
-  createdById   String
-  paymentMethod PaymentMethod
-  total         Decimal       @db.Decimal(12, 2)
-  notes         String?       @db.VarChar(255)
-  createdAt     DateTime      @default(now())
-  client        User?         @relation("ClientRemitos", fields: [clientId], references: [id], onDelete: SetNull)
-  createdBy     User          @relation("IssuedRemitos", fields: [createdById], references: [id])
-  items         RemitoItem[]
+  id             String          @id @default(uuid())
+  number         Int             @unique @default(autoincrement())
+  clientId       String?
+  createdById    String
+  paymentMethod  PaymentMethod
+  total          Decimal         @db.Decimal(12, 2)
+  notes          String?         @db.VarChar(255)
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?         @db.VarChar(255)
+  createdAt      DateTime        @default(now())
+  client         User?           @relation("ClientRemitos", fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy      User            @relation("IssuedRemitos", fields: [createdById], references: [id])
+  voidedBy       User?           @relation("VoidedRemitos", fields: [voidedById], references: [id])
+  items          RemitoItem[]
   stockMovements StockMovement[]
+  returns        RemitoReturn[]
 
   @@index([clientId, createdAt])
   @@index([createdAt])
 }
 
 model RemitoItem {
-  id          String   @id @default(uuid())
-  remitoId    String
-  productId   String?
-  description String   @db.VarChar(255)
-  quantity    Int
-  unitPrice   Decimal  @db.Decimal(12, 2)
-  subtotal    Decimal  @db.Decimal(12, 2)
-  remito      Remito   @relation(fields: [remitoId], references: [id], onDelete: Cascade)
-  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  id               String        @id @default(uuid())
+  remitoId         String
+  productId        String?
+  description      String        @db.VarChar(255)
+  quantity         Int
+  returnedQuantity Int           @default(0)
+  unitPrice        Decimal       @db.Decimal(12, 2)
+  subtotal         Decimal       @db.Decimal(12, 2)
+  remito           Remito        @relation(fields: [remitoId], references: [id], onDelete: Cascade)
+  product          Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  returns          RemitoReturn[]
 
   @@index([remitoId])
+}
+
+model RemitoReturn {
+  id           String     @id @default(uuid())
+  remitoId     String
+  remitoItemId String
+  quantity     Int
+  subtotal     Decimal    @db.Decimal(12, 2)
+  reason       String?    @db.VarChar(255)
+  createdById  String
+  createdAt    DateTime   @default(now())
+  remito       Remito     @relation(fields: [remitoId], references: [id], onDelete: Cascade)
+  remitoItem   RemitoItem @relation(fields: [remitoItemId], references: [id], onDelete: Cascade)
+  createdBy    User       @relation(fields: [createdById], references: [id])
+
+  @@index([remitoId])
+  @@index([remitoItemId])
 }
