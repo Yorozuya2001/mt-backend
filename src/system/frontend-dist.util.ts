@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 
 export function resolveFrontendDist(): string | null {
   const configuredPath = process.env.FRONTEND_DIST_PATH;
@@ -10,7 +10,8 @@ export function resolveFrontendDist(): string | null {
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'index.html'))) return candidate;
+    const absolutePath = resolve(candidate);
+    if (existsSync(join(absolutePath, 'index.html'))) return absolutePath;
   }
 
   return null;

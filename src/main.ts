@@ -1,7 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { AppModule } from './app.module';
 import { resolveFrontendDist } from './system/frontend-dist.util';
 
@@ -59,22 +59,20 @@ async function bootstrap() {
 
   if (frontendDist) {
     app.useStaticAssets(frontendDist, { index: false });
-  }
 
-  await app.listen(port, host);
-
-  if (frontendDist) {
     const expressApp = app.getHttpAdapter().getInstance();
-    expressApp.get('*', (req, res, next) => {
+    expressApp.use((req, res, next) => {
       if (req.method !== 'GET') return next();
       if (isApiRoute(req.path)) return next();
       if (req.path.includes('.')) return next();
 
-      res.sendFile(join(frontendDist, 'index.html'), (error) => {
+      res.sendFile(resolve(frontendDist, 'index.html'), (error) => {
         if (error) next(error);
       });
     });
   }
+
+  await app.listen(port, host);
 
   console.log(`MT API listening on http://${host}:${port}`);
   if (frontendDist) console.log(`Serving frontend from ${frontendDist}`);
