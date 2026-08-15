@@ -9,6 +9,10 @@ import {
 } from './import-batch.processor';
 import { parseArgentinePrice } from '../utils/inventory.utils';
 
+type StreamWorksheetReader = ExcelJS.stream.xlsx.WorksheetReader & {
+  name?: string;
+};
+
 type PartHeaderIndices = {
   skuIdx: number;
   titleIdx: number;
@@ -76,7 +80,9 @@ export class PartsXlsxImporter {
     });
 
     for await (const worksheetReader of reader) {
-      const categoryName = (worksheetReader.name ?? '').trim();
+      const categoryName = (
+        (worksheetReader as StreamWorksheetReader).name ?? ''
+      ).trim();
       if (!categoryName || categoryName === '.') continue;
 
       if (mode === 'replace')
