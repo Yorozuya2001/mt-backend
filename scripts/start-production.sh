@@ -10,4 +10,12 @@ if [ ! -f dist/src/main.js ]; then
 fi
 
 npx prisma migrate deploy
+
+if [ -n "${BOOTSTRAP_ADMIN_EMAIL:-}" ] && [ -n "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]; then
+  echo "Bootstrap admin: verificando SUPERADMIN..."
+  SEED_BOOTSTRAP_ONLY=true npx prisma db seed
+else
+  echo "Bootstrap admin omitido: BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD no definidos"
+fi
+
 exec node dist/src/main.js
