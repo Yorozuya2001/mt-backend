@@ -1,0 +1,203 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  CLIENT
+  SUPERADMIN
+}
+
+enum ProductStatus {
+  AVAILABLE
+  LOW_STOCK
+  OUT_OF_STOCK
+  DISCONTINUED
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  SALE
+  RETURN
+}
+
+enum PaymentMethod {
+  EFECTIVO
+  TRANSFERENCIA
+  TARJETA
+}
+
+model User {
+  id                String          @id @default(uuid())
+  email             String          @unique
+  password          String
+  name              String          @default("")
+  lastName          String          @default("")
+  dni               String?         @unique @db.VarChar(20)
+  phone             String?         @db.VarChar(30)
+  address           String?         @db.VarChar(160)
+  locality          String?         @db.VarChar(100)
+  role              Role            @default(CLIENT)
+  isWholesale       Boolean         @default(false)
+  photoUrl          String?
+  isEmailVerified   Boolean         @default(false)
+  verificationToken String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  stockMovements    StockMovement[]
+  remitos           Remito[]        @relation("ClientRemitos")
+  issuedRemitos     Remito[]        @relation("IssuedRemitos")
+  voidedRemitos     Remito[]        @relation("VoidedRemitos")
+  voidedMovements   StockMovement[] @relation("VoidedMovements")
+  remitoReturns     RemitoReturn[]
+  refreshTokens     RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id             String          @id @default(uuid())
+  categoryId     String
+  sku            String?         @unique @db.VarChar(50)
+  barcode        String?         @unique @db.VarChar(50)
+  title          String
+  description    String?         @db.Text
+  presentation   String?         @db.VarChar(100)
+  brand          String?         @db.VarChar(100)
+  price          Decimal         @db.Decimal(12, 2)
+  wholesalePrice Decimal?        @db.Decimal(12, 2)
+  stock          Int             @default(0)
+  minStock       Int             @default(0)
+  status         ProductStatus   @default(AVAILABLE)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  category       Category        @relation(fields: [categoryId], references: [id])
+  images         ProductImage[]
+  stockMovements StockMovement[]
+  remitoItems    RemitoItem[]
+
+  @@index([categoryId])
+  @@index([title])
+  @@index([barcode])
+  @@index([sku])
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  productId     String
+  type          StockMovementType
+  quantity      Int
+  reason        String?           @db.VarChar(255)
+  remitoId      String?
+  previousStock Int?
+  voidedAt      DateTime?
+  voidedById    String?
+  createdById   String
+  createdAt     DateTime          @default(now())
+  product       Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  remito        Remito?           @relation(fields: [remitoId], references: [id], onDelete: SetNull)
+  createdBy     User              @relation(fields: [createdById], references: [id])
+  voidedBy      User?             @relation("VoidedMovements", fields: [voidedById], references: [id])
+
+  @@index([productId])
+  @@index([createdAt])
+  @@index([remitoId])
+}
+
+model Remito {
+  id             String          @id @default(uuid())
+  number         Int             @unique @default(autoincrement())
+  clientId       String?
+  createdById    String
+  paymentMethod  PaymentMethod
+  total          Decimal         @db.Decimal(12, 2)
+  notes          String?         @db.VarChar(255)
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?         @db.VarChar(255)
+  createdAt      DateTime        @default(now())
+  client         User?           @relation("ClientRemitos", fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy      User            @relation("IssuedRemitos", fields: [createdById], references: [id])
+  voidedBy       User?           @relation("VoidedRemitos", fields: [voidedById], references: [id])
+  items          RemitoItem[]
+  stockMovements StockMovement[]
+  returns        RemitoReturn[]
+
+  @@index([clientId, createdAt])
+  @@index([createdAt])
+}
+
+model RemitoItem {
+  id               String        @id @default(uuid())
+  remitoId         String
+  productId        String?
+  description      String        @db.VarChar(255)
+  quantity         Int
+  returnedQuantity Int           @default(0)
+  unitPrice        Decimal       @db.Decimal(12, 2)
+  subtotal         Decimal       @db.Decimal(12, 2)
+  remito           Remito        @relation(fields: [remitoId], references: [id], onDelete: Cascade)
+  product          Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  returns          RemitoReturn[]
+
+  @@index([remitoId])
+}
+
+model RemitoReturn {
+  id           String     @id @default(uuid())
+  remitoId     String
+  remitoItemId String
+  quantity     Int
+  subtotal     Decimal    @db.Decimal(12, 2)
+  reason       String?    @db.VarChar(255)
+  createdById  String
+  createdAt    DateTime   @default(now())
+  remito       Remito     @relation(fields: [remitoId], references: [id], onDelete: Cascade)
+  remitoItem   RemitoItem @relation(fields: [remitoItemId], references: [id], onDelete: Cascade)
+  createdBy    User       @relation(fields: [createdById], references: [id])
+
+  @@index([remitoId])
+  @@index([remitoItemId])
+}
