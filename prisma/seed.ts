@@ -13,6 +13,15 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  const bootstrapOnly =
+    process.env.SEED_BOOTSTRAP_ONLY === '1' ||
+    process.env.SEED_BOOTSTRAP_ONLY === 'true';
+
+  if (bootstrapOnly) {
+    await bootstrapAdmin(prisma);
+    return;
+  }
+
   await removeDemoClients(prisma);
   await bootstrapAdmin(prisma);
   await seedDevStaff(prisma);
