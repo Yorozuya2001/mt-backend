@@ -4,6 +4,7 @@ import { CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
 import { ProductsXlsxExporter } from './export/products-xlsx.exporter';
 import { CatalogCsvImporter } from './import/catalog-csv.importer';
+import { ImportBatchProcessor } from './import/import-batch.processor';
 import { PartsXlsxImporter } from './import/parts-xlsx.importer';
 import { MovementsController } from './movements.controller';
 import { MovementsService } from './movements.service';
@@ -19,6 +20,7 @@ import { StockService } from './stock.service';
     ProductsService,
     StockService,
     MovementsService,
+    ImportBatchProcessor,
     PartsXlsxImporter,
     CatalogCsvImporter,
     ProductsXlsxExporter,

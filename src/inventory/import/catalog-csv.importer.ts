@@ -1,41 +1,20 @@
-import { Injectable } from '@nestjs/common';
-import { Prisma, ProductStatus } from '../../generated/prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
-import { CategoriesService } from '../categories.service';
+import { Injectable, Logger } from '@nestjs/common';
 import type { ImportMode, ImportResult } from './import-result.type';
+import {
+  IMPORT_BATCH_SIZE,
+  ImportBatchProcessor,
+  type CatalogImportRow,
+} from './import-batch.processor';
 import { parseArgentinePrice } from '../utils/inventory.utils';
-
-type ParsedCatalogRow = {
-  rowNumber: number;
-  categoryName: string;
-  title: string;
-  presentation: string | null;
-  price: number;
-  description: string | null;
-};
 
 @Injectable()
 export class CatalogCsvImporter {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly categoriesService: CategoriesService,
-  ) {}
+  private readonly logger = new Logger(CatalogCsvImporter.name);
+
+  constructor(private readonly batchProcessor: ImportBatchProcessor) {}
 
   async import(buffer: Buffer, mode: ImportMode = 'merge'): Promise<ImportResult> {
-    const rows = this.parseCsv(buffer);
-    const categoryNames = [...new Set(rows.map((row) => row.categoryName))];
-
-    if (mode === 'replace') {
-      const categories = await this.prisma.category.findMany({
-        where: { name: { in: categoryNames } },
-        select: { id: true },
-      });
-      if (categories.length) {
-        await this.prisma.product.deleteMany({
-          where: { categoryId: { in: categories.map((c) => c.id) } },
-        });
-      }
-    }
+    this.batchProcessor.clearCategoryCache();
 
     const result: ImportResult = {
       created: 0,
@@ -44,68 +23,71 @@ export class CatalogCsvImporter {
       errors: [],
     };
 
-    for (const row of rows) {
-      try {
-        const category = await this.categoriesService.findOrCreateByName(
-          row.categoryName,
-        );
-        const existing = await this.prisma.product.findFirst({
-          where: {
-            categoryId: category.id,
-            title: row.title,
-            presentation: row.presentation,
-          },
-        });
+    const batch: CatalogImportRow[] = [];
 
-        const data = {
-          categoryId: category.id,
-          title: row.title,
-          presentation: row.presentation,
-          description: row.description,
-          price: new Prisma.Decimal(row.price),
-          stock: 0,
-          status: ProductStatus.AVAILABLE,
-          sku: null as string | null,
-          brand: null as string | null,
-        };
+    const flush = async () => {
+      if (!batch.length) return;
+      await this.batchProcessor.processCatalogRows(batch, result);
+      batch.length = 0;
+    };
 
-        if (existing) {
-          await this.prisma.product.update({
-            where: { id: existing.id },
-            data,
-          });
-          result.updated += 1;
-        } else {
-          await this.prisma.product.create({ data });
-          result.created += 1;
-        }
-      } catch (error) {
-        result.skipped += 1;
-        result.errors.push({
-          row: row.rowNumber,
-          message: error instanceof Error ? error.message : 'Error desconocido',
-        });
-      }
+    this.logger.log(
+      `Import catalog-csv (${mode}): ${(buffer.length / 1024).toFixed(1)} KB`,
+    );
+
+    if (mode === 'replace') {
+      const categoryNames = this.collectCategoryNames(buffer);
+      for (const categoryName of categoryNames)
+        await this.batchProcessor.deleteProductsInCategory(categoryName);
     }
+
+    await this.streamRows(buffer, async (row) => {
+      batch.push(row);
+      if (batch.length >= IMPORT_BATCH_SIZE) await flush();
+    });
+
+    await flush();
+
+    this.logger.log(
+      `Import catalog-csv listo: +${result.created} ~${result.updated} !${result.skipped}`,
+    );
 
     return result;
   }
 
-  private parseCsv(buffer: Buffer): ParsedCatalogRow[] {
-    const text = buffer.toString('latin1');
-    const rows = this.parseCsvRows(text);
+  private collectCategoryNames(buffer: Buffer): string[] {
+    const rows = this.parseCsvRows(buffer.toString('latin1'));
     const headerIdx = rows.findIndex((row) => row[0] === 'CATEGORIA');
     if (headerIdx === -1) return [];
 
+    const names = new Set<string>();
     let currentCategory = '';
-    const parsed: ParsedCatalogRow[] = [];
+
+    for (let i = headerIdx + 1; i < rows.length; i += 1) {
+      const [cat] = rows[i];
+      if (cat?.trim()) currentCategory = cat.trim();
+      if (currentCategory) names.add(currentCategory);
+    }
+
+    return [...names];
+  }
+
+  private async streamRows(
+    buffer: Buffer,
+    onRow: (row: CatalogImportRow) => Promise<void>,
+  ): Promise<void> {
+    const rows = this.parseCsvRows(buffer.toString('latin1'));
+    const headerIdx = rows.findIndex((row) => row[0] === 'CATEGORIA');
+    if (headerIdx === -1) return;
+
+    let currentCategory = '';
 
     for (let i = headerIdx + 1; i < rows.length; i += 1) {
       const [cat, product, presentation, price, detail] = rows[i];
       if (cat?.trim()) currentCategory = cat.trim();
       if (!product?.trim() || !currentCategory) continue;
 
-      parsed.push({
+      await onRow({
         rowNumber: i + 1,
         categoryName: currentCategory,
         title: product.trim(),
@@ -114,8 +96,6 @@ export class CatalogCsvImporter {
         description: detail?.trim() || null,
       });
     }
-
-    return parsed;
   }
 
   private parseCsvRows(text: string): string[][] {

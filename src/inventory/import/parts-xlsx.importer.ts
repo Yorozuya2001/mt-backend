@@ -1,48 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
-import { Prisma } from '../../generated/prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
-import { CategoriesService } from '../categories.service';
+import { Readable } from 'stream';
 import type { ImportMode, ImportResult } from './import-result.type';
 import {
-  mapEstadoToStatus,
-  parseArgentinePrice,
-} from '../utils/inventory.utils';
+  IMPORT_BATCH_SIZE,
+  ImportBatchProcessor,
+  type PartsImportRow,
+} from './import-batch.processor';
+import { parseArgentinePrice } from '../utils/inventory.utils';
 
-type ParsedPartRow = {
-  rowNumber: number;
-  categoryName: string;
-  sku: string | null;
-  title: string;
-  brand: string | null;
-  price: number;
-  stock: number;
-  statusText: string | null;
-  notes: string | null;
+type PartHeaderIndices = {
+  skuIdx: number;
+  titleIdx: number;
+  brandIdx: number;
+  priceIdx: number;
+  stockIdx: number;
+  statusIdx: number;
+  notesIdx: number;
 };
 
 @Injectable()
 export class PartsXlsxImporter {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly categoriesService: CategoriesService,
-  ) {}
+  private readonly logger = new Logger(PartsXlsxImporter.name);
+
+  constructor(private readonly batchProcessor: ImportBatchProcessor) {}
 
   async import(buffer: Buffer, mode: ImportMode = 'merge'): Promise<ImportResult> {
-    const rows = await this.parseWorkbook(buffer);
-    const categoryNames = [...new Set(rows.map((row) => row.categoryName))];
-
-    if (mode === 'replace') {
-      const categories = await this.prisma.category.findMany({
-        where: { name: { in: categoryNames } },
-        select: { id: true },
-      });
-      if (categories.length) {
-        await this.prisma.product.deleteMany({
-          where: { categoryId: { in: categories.map((c) => c.id) } },
-        });
-      }
-    }
+    this.batchProcessor.clearCategoryCache();
 
     const result: ImportResult = {
       created: 0,
@@ -51,117 +35,132 @@ export class PartsXlsxImporter {
       errors: [],
     };
 
-    for (const row of rows) {
-      try {
-        const category = await this.categoriesService.findOrCreateByName(
-          row.categoryName,
-        );
-        const status = mapEstadoToStatus(row.statusText, row.stock, 0);
-        const existing = row.sku
-          ? await this.prisma.product.findUnique({ where: { sku: row.sku } })
-          : await this.prisma.product.findFirst({
-              where: {
-                categoryId: category.id,
-                title: row.title,
-              },
-            });
+    const batch: PartsImportRow[] = [];
 
-        const data = {
-          categoryId: category.id,
-          sku: row.sku,
-          title: row.title,
-          brand: row.brand,
-          price: new Prisma.Decimal(row.price),
-          stock: row.stock,
-          status,
-          description: row.notes,
-          presentation: null as string | null,
-        };
+    const flush = async () => {
+      if (!batch.length) return;
+      await this.batchProcessor.processPartsRows(batch, result);
+      batch.length = 0;
+    };
 
-        if (existing) {
-          await this.prisma.product.update({
-            where: { id: existing.id },
-            data,
-          });
-          result.updated += 1;
-        } else {
-          await this.prisma.product.create({ data });
-          result.created += 1;
-        }
-      } catch (error) {
-        result.skipped += 1;
-        result.errors.push({
-          row: row.rowNumber,
-          message: error instanceof Error ? error.message : 'Error desconocido',
-        });
-      }
-    }
+    this.logger.log(
+      `Import parts-xlsx (${mode}): ${(buffer.length / 1024).toFixed(1)} KB`,
+    );
+
+    await this.streamRows(buffer, mode, async (row) => {
+      batch.push(row);
+      if (batch.length >= IMPORT_BATCH_SIZE) await flush();
+    });
+
+    await flush();
+
+    this.logger.log(
+      `Import parts-xlsx listo: +${result.created} ~${result.updated} !${result.skipped}`,
+    );
 
     return result;
   }
 
-  private async parseWorkbook(buffer: Buffer): Promise<ParsedPartRow[]> {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
-    const parsed: ParsedPartRow[] = [];
+  private async streamRows(
+    buffer: Buffer,
+    mode: ImportMode,
+    onRow: (row: PartsImportRow) => Promise<void>,
+  ): Promise<void> {
+    const stream = Readable.from(buffer);
+    const reader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
+      worksheets: 'emit',
+      sharedStrings: 'cache',
+      hyperlinks: 'ignore',
+      styles: 'ignore',
+      entries: 'ignore',
+    });
 
-    for (const worksheet of workbook.worksheets) {
-      const categoryName = worksheet.name.trim();
+    for await (const worksheetReader of reader) {
+      const categoryName = (worksheetReader.name ?? '').trim();
       if (!categoryName || categoryName === '.') continue;
 
-      const matrix: unknown[][] = [];
-      worksheet.eachRow({ includeEmpty: true }, (row) => {
-        matrix.push(row.values ? (row.values as unknown[]).slice(1) : []);
-      });
-      if (!matrix.length) continue;
+      if (mode === 'replace')
+        await this.batchProcessor.deleteProductsInCategory(categoryName);
 
-      const header = matrix[0].map((cell) =>
-        String(cell ?? '')
-          .trim()
-          .toLowerCase(),
-      );
-      const skuIdx = header.findIndex(
-        (h) => h.includes('id de art') || h === 'columna 1',
-      );
-      const titleIdx = header.findIndex((h) => h.includes('nombre'));
-      const brandIdx = header.findIndex((h) => h === 'tipo');
-      const priceIdx = header.findIndex((h) => h === 'precio');
-      const stockIdx = header.findIndex((h) => h === 'stock');
-      const statusIdx = header.findIndex((h) => h === 'estado');
-      const notesIdx = header.findIndex((h) => h === 'notas');
+      let header: PartHeaderIndices | null = null;
 
-      if (titleIdx === -1) continue;
+      for await (const row of worksheetReader) {
+        const values = row.values as unknown[] | undefined;
+        const cells = values ? values.slice(1) : [];
+        if (!cells.length) continue;
 
-      for (let i = 1; i < matrix.length; i += 1) {
-        const row = matrix[i];
-        const title = String(row[titleIdx] ?? '').trim();
-        if (!title) continue;
+        if (!header) {
+          header = this.parseHeader(cells);
+          if (header.titleIdx === -1) break;
+          continue;
+        }
 
-        const skuRaw = skuIdx >= 0 ? String(row[skuIdx] ?? '').trim() : '';
-        const stockRaw = stockIdx >= 0 ? row[stockIdx] : '';
-        const stock =
-          stockRaw !== '' && stockRaw !== null && !Number.isNaN(Number(stockRaw))
-            ? Number(stockRaw)
-            : 0;
+        const parsed = this.parseDataRow(cells, header, categoryName, row.number);
+        if (!parsed) continue;
 
-        parsed.push({
-          rowNumber: i + 1,
-          categoryName,
-          sku: skuRaw || null,
-          title,
-          brand:
-            brandIdx >= 0 ? String(row[brandIdx] ?? '').trim() || null : null,
-          price: parseArgentinePrice(
-            priceIdx >= 0 ? (row[priceIdx] as string | number) : 0,
-          ),
-          stock,
-          statusText:
-            statusIdx >= 0 ? String(row[statusIdx] ?? '').trim() || null : null,
-          notes: notesIdx >= 0 ? String(row[notesIdx] ?? '').trim() || null : null,
-        });
+        await onRow(parsed);
       }
     }
+  }
 
-    return parsed;
+  private parseHeader(cells: unknown[]): PartHeaderIndices {
+    const header = cells.map((cell) =>
+      String(cell ?? '')
+        .trim()
+        .toLowerCase(),
+    );
+
+    return {
+      skuIdx: header.findIndex(
+        (value) => value.includes('id de art') || value === 'columna 1',
+      ),
+      titleIdx: header.findIndex((value) => value.includes('nombre')),
+      brandIdx: header.findIndex((value) => value === 'tipo'),
+      priceIdx: header.findIndex((value) => value === 'precio'),
+      stockIdx: header.findIndex((value) => value === 'stock'),
+      statusIdx: header.findIndex((value) => value === 'estado'),
+      notesIdx: header.findIndex((value) => value === 'notas'),
+    };
+  }
+
+  private parseDataRow(
+    cells: unknown[],
+    header: PartHeaderIndices,
+    categoryName: string,
+    rowNumber: number,
+  ): PartsImportRow | null {
+    const title = String(cells[header.titleIdx] ?? '').trim();
+    if (!title) return null;
+
+    const skuRaw =
+      header.skuIdx >= 0 ? String(cells[header.skuIdx] ?? '').trim() : '';
+    const stockRaw = header.stockIdx >= 0 ? cells[header.stockIdx] : '';
+    const stock =
+      stockRaw !== '' && stockRaw !== null && !Number.isNaN(Number(stockRaw))
+        ? Number(stockRaw)
+        : 0;
+
+    return {
+      rowNumber,
+      categoryName,
+      sku: skuRaw || null,
+      title,
+      brand:
+        header.brandIdx >= 0
+          ? String(cells[header.brandIdx] ?? '').trim() || null
+          : null,
+      price: parseArgentinePrice(
+        header.priceIdx >= 0 ? (cells[header.priceIdx] as string | number) : 0,
+      ),
+      stock,
+      statusText:
+        header.statusIdx >= 0
+          ? String(cells[header.statusIdx] ?? '').trim() || null
+          : null,
+      notes:
+        header.notesIdx >= 0
+          ? String(cells[header.notesIdx] ?? '').trim() || null
+          : null,
+    };
   }
 }
