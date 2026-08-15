@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import type { StringValue } from 'ms';
@@ -9,6 +10,7 @@ import { AuthService } from './auth.service';
 import { Roles } from './decorators/roles.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { RefreshTokenService } from './refresh-token.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -19,19 +21,40 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const expiresIn = (configService.get<string>('JWT_EXPIRES_IN') ??
-          '1d') as StringValue;
+        const secret =
+          configService.get<string>('JWT_ACCESS_SECRET') ??
+          configService.getOrThrow<string>('JWT_SECRET');
+        const expiresIn = (configService.get<string>('JWT_ACCESS_EXPIRES_IN') ??
+          configService.get<string>('JWT_EXPIRES_IN') ??
+          '15m') as StringValue;
 
         return {
-          secret: configService.getOrThrow<string>('JWT_SECRET'),
+          secret,
           signOptions: { expiresIn },
         };
       },
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, RolesGuard],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, JwtModule, PassportModule],
+  providers: [
+    AuthService,
+    RefreshTokenService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
+  exports: [
+    AuthService,
+    RefreshTokenService,
+    JwtAuthGuard,
+    RolesGuard,
+    JwtModule,
+    PassportModule,
+  ],
 })
 export class AuthModule {}
 

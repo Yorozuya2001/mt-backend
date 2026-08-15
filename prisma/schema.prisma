@@ -61,6 +61,19 @@ model User {
   voidedRemitos     Remito[]        @relation("VoidedRemitos")
   voidedMovements   StockMovement[] @relation("VoidedMovements")
   remitoReturns     RemitoReturn[]
+  refreshTokens     RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Category {

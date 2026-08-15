@@ -1,54 +1,64 @@
 import * as bcrypt from 'bcrypt';
 import { PrismaClient, Role } from '../../src/generated/prisma/client';
 
-export const STAFF_USERS = [
-  {
-    email: 'superadmin@mt.local',
-    password: 'SuperAdmin123!',
-    name: 'Super',
-    lastName: 'Admin',
-    role: Role.SUPERADMIN,
-  },
-  {
-    email: 'admin1@shop.com',
-    password: 'Admin1Shop2026!',
-    name: 'Admin',
-    lastName: 'Uno',
-    role: Role.ADMIN,
-  },
-  {
-    email: 'admin2@shop.com',
-    password: 'Admin2Shop2026!',
-    name: 'Admin',
-    lastName: 'Dos',
-    role: Role.ADMIN,
-  },
-] as const;
+const DEMO_CLIENT_EMAIL_PREFIX = 'cliente.seed.';
 
-export async function seedStaffUsers(prisma: PrismaClient): Promise<void> {
-  for (const staff of STAFF_USERS) {
-    const passwordHash = await bcrypt.hash(staff.password, 10);
+export async function removeDemoClients(prisma: PrismaClient): Promise<void> {
+  const deleted = await prisma.user.deleteMany({
+    where: { email: { startsWith: DEMO_CLIENT_EMAIL_PREFIX } },
+  });
 
+  if (deleted.count > 0)
+    console.log(`Clientes de semilla eliminados: ${deleted.count}`);
+}
+
+/**
+ * Crea admins de desarrollo solo si STAFF_DEV_PASSWORD está definida.
+ * Nunca commitear passwords en este archivo.
+ */
+export async function seedDevStaff(prisma: PrismaClient): Promise<void> {
+  const devPassword = process.env.STAFF_DEV_PASSWORD;
+  if (!devPassword) {
+    console.log('Seed staff omitido: defina STAFF_DEV_PASSWORD para desarrollo');
+    return;
+  }
+
+  const staff = [
+    {
+      email: 'admin1@shop.com',
+      name: 'Admin',
+      lastName: 'Uno',
+      role: Role.ADMIN,
+    },
+    {
+      email: 'admin2@shop.com',
+      name: 'Admin',
+      lastName: 'Dos',
+      role: Role.ADMIN,
+    },
+  ];
+
+  const passwordHash = await bcrypt.hash(devPassword, 10);
+
+  for (const entry of staff) {
     await prisma.user.upsert({
-      where: { email: staff.email },
+      where: { email: entry.email },
       update: {
-        password: passwordHash,
-        name: staff.name,
-        lastName: staff.lastName,
-        role: staff.role,
+        name: entry.name,
+        lastName: entry.lastName,
+        role: entry.role,
         isEmailVerified: true,
-        verificationToken: null,
       },
       create: {
-        email: staff.email,
+        email: entry.email,
         password: passwordHash,
-        name: staff.name,
-        lastName: staff.lastName,
-        role: staff.role,
+        name: entry.name,
+        lastName: entry.lastName,
+        role: entry.role,
         isEmailVerified: true,
       },
     });
 
-    console.log(`Seed staff: ${staff.email} (${staff.role})`);
+    console.log(`Seed staff: ${entry.email} (${entry.role})`);
   }
 }

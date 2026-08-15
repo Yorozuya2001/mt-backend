@@ -1,9 +1,8 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
-import { seedStaffUsers } from './seeds/staff.seed';
-
-const DEMO_CLIENT_EMAIL_PREFIX = 'cliente.seed.';
+import { bootstrapAdmin } from './seeds/bootstrap-admin';
+import { removeDemoClients, seedDevStaff } from './seeds/staff.seed';
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -13,18 +12,10 @@ if (!connectionString)
 const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
-async function removeDemoClients(client: PrismaClient): Promise<void> {
-  const deleted = await client.user.deleteMany({
-    where: { email: { startsWith: DEMO_CLIENT_EMAIL_PREFIX } },
-  });
-
-  if (deleted.count > 0)
-    console.log(`Clientes de semilla eliminados: ${deleted.count}`);
-}
-
 async function main() {
   await removeDemoClients(prisma);
-  await seedStaffUsers(prisma);
+  await bootstrapAdmin(prisma);
+  await seedDevStaff(prisma);
 }
 
 main()

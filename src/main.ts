@@ -1,8 +1,13 @@
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { join, resolve } from 'path';
 import { AppModule } from './app.module';
+import { createUploadsAuthMiddleware } from './auth/uploads-auth.middleware';
 import { resolveFrontendDist } from './system/frontend-dist.util';
 
 const API_ROUTE_PREFIXES = [
@@ -26,8 +31,16 @@ function isApiRoute(path: string): boolean {
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const configService = app.get(ConfigService);
 
-  const corsOrigins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? [
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  app.use(cookieParser());
+
+  const corsOrigins = configService
+    .get<string>('CORS_ORIGIN')
+    ?.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean) ?? [
     'http://localhost',
     'http://localhost:5173',
     'http://localhost:5174',
@@ -40,6 +53,13 @@ async function bootstrap() {
     credentials: true,
   });
 
+  const jwtSecret =
+    configService.get<string>('JWT_ACCESS_SECRET') ??
+    configService.getOrThrow<string>('JWT_SECRET');
+  const jwtService = app.get(JwtService);
+  const uploadsAuth = createUploadsAuthMiddleware(jwtService, jwtSecret);
+
+  app.use('/uploads', uploadsAuth);
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads',
   });
@@ -52,9 +72,9 @@ async function bootstrap() {
     }),
   );
 
-  const host = process.env.HOST ?? '0.0.0.0';
-  const port = Number(process.env.PORT ?? 3000);
-  const isProduction = process.env.NODE_ENV === 'production';
+  const host = configService.get<string>('HOST') ?? '0.0.0.0';
+  const port = Number(configService.get<string>('PORT') ?? 3000);
+  const isProduction = configService.get<string>('NODE_ENV') === 'production';
   const frontendDist = isProduction ? resolveFrontendDist() : null;
 
   if (frontendDist) {

@@ -4,11 +4,14 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import type { Request, Response } from 'express';
 import { Role } from '../generated/prisma/client';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenService } from './refresh-token.service';
 import type { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
@@ -16,6 +19,8 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
+    private readonly refreshTokenService: RefreshTokenService,
+    private readonly configService: ConfigService,
   ) {}
 
   async verifyEmail(token: string) {
@@ -34,7 +39,7 @@ export class AuthService {
     return { message: 'Correo verificado correctamente.' };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, res: Response) {
     const user = await this.usersService.findByEmail(dto.email);
     if (!user)
       throw new UnauthorizedException('Credenciales inválidas');
@@ -51,15 +56,42 @@ export class AuthService {
         'Verificá tu correo electrónico antes de iniciar sesión.',
       );
 
-    const payload: JwtPayload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    };
+    await this.refreshTokenService.issueRefreshToken(user.id, res);
 
     return {
-      access_token: await this.jwtService.signAsync(payload),
+      access_token: await this.signAccessToken(user.id, user.email, user.role),
     };
+  }
+
+  async refresh(req: Request, res: Response) {
+    const cookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') ?? 'mt_refresh';
+    const rawToken = req.cookies?.[cookieName] as string | undefined;
+
+    if (!rawToken?.trim())
+      throw new UnauthorizedException('Sesión expirada');
+
+    const { userId } = await this.refreshTokenService.rotateRefreshToken(
+      rawToken,
+      res,
+    );
+
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('Sesión expirada');
+
+    return {
+      access_token: await this.signAccessToken(user.id, user.email, user.role),
+    };
+  }
+
+  async logout(req: Request, res: Response) {
+    const cookieName =
+      this.configService.get<string>('REFRESH_COOKIE_NAME') ?? 'mt_refresh';
+    const rawToken = req.cookies?.[cookieName] as string | undefined;
+
+    await this.refreshTokenService.revokeRefreshToken(rawToken, res);
+
+    return { message: 'Sesión cerrada' };
   }
 
   async getProfile(userId: string) {
@@ -67,5 +99,19 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
 
     return this.usersService.toPublicUser(user);
+  }
+
+  private async signAccessToken(
+    userId: string,
+    email: string,
+    role: Role,
+  ): Promise<string> {
+    const payload: JwtPayload = {
+      sub: userId,
+      email,
+      role,
+    };
+
+    return this.jwtService.signAsync(payload);
   }
 }

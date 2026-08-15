@@ -3,9 +3,9 @@ services:
     image: postgres:15-alpine
     container_name: mt_db
     environment:
-      POSTGRES_USER: axel
-      POSTGRES_PASSWORD: 43202499Av
-      POSTGRES_DB: mt_db
+      POSTGRES_USER: ${POSTGRES_USER:-mt_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-mt_db}
     ports:
       - '5433:5432'
     volumes:
