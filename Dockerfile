@@ -27,6 +27,7 @@ RUN npm ci --omit=dev
 
 COPY prisma ./prisma
 COPY prisma.config.ts ./
+COPY scripts ./scripts
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/generated ./src/generated
 
@@ -34,4 +35,4 @@ RUN npx prisma generate
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
+CMD ["sh", "scripts/start-production.sh"]

@@ -73,7 +73,7 @@ async function bootstrap() {
   );
 
   const host = configService.get<string>('HOST') ?? '0.0.0.0';
-  const port = Number(configService.get<string>('PORT') ?? 3000);
+  const port = Number(process.env.PORT ?? configService.get<string>('PORT') ?? 3000);
   const isProduction = configService.get<string>('NODE_ENV') === 'production';
   const frontendDist = isProduction ? resolveFrontendDist() : null;
 
@@ -97,4 +97,7 @@ async function bootstrap() {
   console.log(`MT API listening on http://${host}:${port}`);
   if (frontendDist) console.log(`Serving frontend from ${frontendDist}`);
 }
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Failed to start MT API:', error);
+  process.exit(1);
+});
