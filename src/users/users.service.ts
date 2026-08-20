@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { Prisma, Role, User } from '../generated/prisma/client';
 import { MailService } from '../mail/mail.service';
@@ -173,11 +173,14 @@ export class UsersService {
         };
       }
 
-      const verificationToken = randomBytes(32).toString('hex');
+      const verificationToken = this.mailService.isSmtpConfigured
+        ? randomBytes(32).toString('hex')
+        : null;
       const user = await this.create({
         email: dto.email,
         passwordHash,
         verificationToken,
+        isEmailVerified: !this.mailService.isSmtpConfigured,
         role: targetRole,
         name: dto.name,
         lastName: dto.lastName,
@@ -187,15 +190,22 @@ export class UsersService {
         locality: dto.locality || null,
       });
 
-      await this.mailService.sendVerificationEmail(
-        dto.email,
-        verificationToken,
-      );
+      if (this.mailService.isSmtpConfigured && verificationToken) {
+        await this.mailService.sendVerificationEmail(
+          dto.email,
+          verificationToken,
+        );
+
+        return {
+          user: this.toPublicUser(user),
+          message:
+            'Usuario creado. Se envió un correo para verificar la cuenta.',
+        };
+      }
 
       return {
         user: this.toPublicUser(user),
-        message:
-          'Usuario creado. Se envió un correo para verificar la cuenta.',
+        message: 'Usuario creado. Ya puede iniciar sesión.',
       };
     } catch (error) {
       if (this.isUniqueConstraintError(error))

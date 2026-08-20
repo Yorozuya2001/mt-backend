@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -12,10 +13,17 @@ import {
   User,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import type { BulkUpdatePriceDto } from './dto/bulk-update-price.dto';
+import type { BulkUpdateProductsDto } from './dto/bulk-update-products.dto';
 import type { CreateProductDto } from './dto/create-product.dto';
 import type { ListProductsQueryDto } from './dto/list-products.query.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
-import { decimalToNumber } from './utils/inventory.utils';
+import { decimalToNumber, scalePrice } from './utils/inventory.utils';
+import {
+  PRODUCT_GAPS,
+  gapWhere,
+  type ProductGapsCounts,
+} from './utils/product-gaps';
 
 export type PublicProductImage = {
   id: string;
@@ -131,16 +139,21 @@ export class ProductsService {
       isActive: true,
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(search
-        ? {
-            OR: [
-              { title: { contains: search, mode: 'insensitive' } },
-              { sku: { contains: search, mode: 'insensitive' } },
-              { barcode: { contains: search, mode: 'insensitive' } },
-              { brand: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      AND: [
+        ...(query.gap ? [gapWhere(query.gap)] : []),
+        ...(search
+          ? [
+              {
+                OR: [
+                  { title: { contains: search } },
+                  { sku: { contains: search } },
+                  { barcode: { contains: search } },
+                  { brand: { contains: search } },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
 
     const [total, products] = await this.prisma.$transaction([
@@ -166,6 +179,21 @@ export class ProductsService {
     };
   }
 
+  async findGaps(): Promise<ProductGapsCounts> {
+    const base = { isActive: true } as const;
+    const counts = await Promise.all(
+      PRODUCT_GAPS.map((gap) =>
+        this.prisma.product.count({
+          where: { ...base, ...gapWhere(gap) },
+        }),
+      ),
+    );
+
+    return Object.fromEntries(
+      PRODUCT_GAPS.map((gap, index) => [gap, counts[index] ?? 0]),
+    ) as ProductGapsCounts;
+  }
+
   async findById(id: string) {
     const product = await this.prisma.product.findUnique({
       where: { id },
@@ -178,16 +206,27 @@ export class ProductsService {
     return this.toPublicProduct(product);
   }
 
-  async findByBarcode(barcode: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { barcode },
-      include: {
-        category: true,
-        images: { orderBy: { sortOrder: 'asc' } },
-      },
+  async findByBarcode(code: string) {
+    const trimmed = code.trim();
+    if (!trimmed) throw new NotFoundException('Producto no encontrado');
+
+    const include = {
+      category: true,
+      images: { orderBy: { sortOrder: 'asc' as const } },
+    };
+
+    const byBarcode = await this.prisma.product.findUnique({
+      where: { barcode: trimmed },
+      include,
     });
-    if (!product) throw new NotFoundException('Producto no encontrado');
-    return this.toPublicProduct(product);
+    if (byBarcode) return this.toPublicProduct(byBarcode);
+
+    const bySku = await this.prisma.product.findUnique({
+      where: { sku: trimmed },
+      include,
+    });
+    if (!bySku) throw new NotFoundException('Producto no encontrado');
+    return this.toPublicProduct(bySku);
   }
 
   async create(dto: CreateProductDto): Promise<PublicProduct> {
@@ -263,13 +302,83 @@ export class ProductsService {
     }
   }
 
-  async softDelete(id: string): Promise<{ message: string }> {
+  async remove(id: string): Promise<{ message: string }> {
     await this.ensureExists(id);
-    await this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
+    await this.prisma.product.delete({ where: { id } });
+    return { message: 'Producto eliminado correctamente.' };
+  }
+
+  async bulkUpdate(
+    dto: BulkUpdateProductsDto,
+  ): Promise<{ updated: number }> {
+    if (!dto.categoryId)
+      throw new BadRequestException('Indicá una categoría');
+
+    const ids = await this.ensureAllExist(dto.ids);
+
+    const category = await this.prisma.category.findUnique({
+      where: { id: dto.categoryId },
     });
-    return { message: 'Producto desactivado correctamente.' };
+    if (!category) throw new NotFoundException('Categoría no encontrada');
+
+    const result = await this.prisma.product.updateMany({
+      where: { id: { in: ids } },
+      data: { categoryId: dto.categoryId },
+    });
+
+    return { updated: result.count };
+  }
+
+  async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
+    const uniqueIds = await this.ensureAllExist(ids);
+    const result = await this.prisma.product.deleteMany({
+      where: { id: { in: uniqueIds } },
+    });
+    return { deleted: result.count };
+  }
+
+  async deleteAll(): Promise<{ deleted: number }> {
+    const result = await this.prisma.product.deleteMany();
+    return { deleted: result.count };
+  }
+
+  async bulkUpdatePrice(
+    dto: BulkUpdatePriceDto,
+  ): Promise<{ updated: number }> {
+    const ids = await this.ensureAllExist(dto.ids);
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: ids } },
+    });
+
+    await this.prisma.$transaction(
+      products.map((product) => {
+        const price = scalePrice(
+          decimalToNumber(product.price) ?? 0,
+          dto.percent,
+          dto.direction,
+        );
+        const wholesale =
+          dto.applyToWholesale && product.wholesalePrice != null
+            ? scalePrice(
+                decimalToNumber(product.wholesalePrice) ?? 0,
+                dto.percent,
+                dto.direction,
+              )
+            : undefined;
+
+        return this.prisma.product.update({
+          where: { id: product.id },
+          data: {
+            price: new Prisma.Decimal(price.toFixed(2)),
+            ...(wholesale !== undefined
+              ? { wholesalePrice: new Prisma.Decimal(wholesale.toFixed(2)) }
+              : {}),
+          },
+        });
+      }),
+    );
+
+    return { updated: products.length };
   }
 
   async addImage(productId: string, url: string): Promise<PublicProduct> {
@@ -339,6 +448,21 @@ export class ProductsService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Producto no encontrado');
     return product;
+  }
+
+  private uniqueIds(ids: string[]): string[] {
+    return [...new Set(ids)];
+  }
+
+  private async ensureAllExist(ids: string[]): Promise<string[]> {
+    const uniqueIds = this.uniqueIds(ids);
+    const found = await this.prisma.product.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true },
+    });
+    if (found.length !== uniqueIds.length)
+      throw new NotFoundException('Producto no encontrado');
+    return uniqueIds;
   }
 
   isUniqueConstraintError(error: unknown): boolean {

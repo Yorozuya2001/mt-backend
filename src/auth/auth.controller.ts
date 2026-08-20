@@ -27,7 +27,9 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 900000 } })
+  @Throttle({
+    default: { limit: process.env.NODE_ENV === 'test' ? 100000 : 5, ttl: 900000 },
+  })
   @Post('login')
   login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     return this.authService.login(dto, res);

@@ -26,13 +26,13 @@ export class RefreshTokenService {
 
   private getRefreshExpiresMs(): number {
     const raw =
-      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '400d';
     return this.parseDurationMs(raw);
   }
 
   private parseDurationMs(value: string): number {
     const match = /^(\d+)([smhd])$/i.exec(value.trim());
-    if (!match) return 7 * 24 * 60 * 60 * 1000;
+    if (!match) return 400 * 24 * 60 * 60 * 1000;
 
     const amount = Number(match[1]);
     const unit = match[2].toLowerCase();
@@ -47,14 +47,14 @@ export class RefreshTokenService {
   }
 
   getCookieOptions(): RefreshCookieOptions {
-    const isProduction =
-      this.configService.get<string>('NODE_ENV') === 'production';
+    const secure =
+      this.configService.get<string>('COOKIE_SECURE') === 'true';
 
     return {
       name: this.configService.get<string>('REFRESH_COOKIE_NAME') ?? 'mt_refresh',
       maxAgeMs: this.getRefreshExpiresMs(),
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
+      secure,
+      sameSite: secure ? 'none' : 'lax',
       domain: this.configService.get<string>('COOKIE_DOMAIN')?.trim() || undefined,
     };
   }

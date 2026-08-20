@@ -15,6 +15,18 @@ const IGNORED_INTERFACE_PATTERNS = [
   /Loopback/i,
 ];
 
+export function isLanHttpOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    const hostname = url.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    return isPrivateIpv4(hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isPrivateIpv4(address: string): boolean {
   return PRIVATE_IPV4_PATTERNS.some((pattern) => pattern.test(address));
 }

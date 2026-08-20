@@ -200,11 +200,11 @@ export class MovementsService {
       ...(search
         ? {
             OR: [
-              { reason: { contains: search, mode: 'insensitive' } },
-              { product: { title: { contains: search, mode: 'insensitive' } } },
-              { product: { sku: { contains: search, mode: 'insensitive' } } },
+              { reason: { contains: search } },
+              { product: { title: { contains: search } } },
+              { product: { sku: { contains: search } } },
               {
-                product: { barcode: { contains: search, mode: 'insensitive' } },
+                product: { barcode: { contains: search } },
               },
             ],
           }

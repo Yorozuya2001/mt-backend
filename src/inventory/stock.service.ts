@@ -5,10 +5,12 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  Product,
   ProductStatus,
   StockMovementType,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import type { BulkStockType } from './dto/bulk-adjust-stock.dto';
 
 export type RegisterSaleInput = {
   productId: string;
@@ -199,11 +201,58 @@ export class StockService {
     quantity: number,
     reason?: string,
   ) {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+      return this.applyAdjust(tx, product, userId, type, quantity, reason);
     });
-    if (!product) throw new NotFoundException('Producto no encontrado');
+  }
 
+  async adjustMany(
+    ids: string[],
+    userId: string,
+    type: BulkStockType,
+    quantity: number,
+    reason?: string,
+  ): Promise<{ updated: number }> {
+    const uniqueIds = [...new Set(ids)];
+    const movementType = type as StockMovementType;
+
+    return this.prisma.$transaction(async (tx) => {
+      const found = await tx.product.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true },
+      });
+      if (found.length !== uniqueIds.length)
+        throw new NotFoundException('Producto no encontrado');
+
+      for (const id of uniqueIds) {
+        const product = await tx.product.findUnique({ where: { id } });
+        if (!product) throw new NotFoundException('Producto no encontrado');
+        await this.applyAdjust(
+          tx,
+          product,
+          userId,
+          movementType,
+          quantity,
+          reason,
+        );
+      }
+
+      return { updated: uniqueIds.length };
+    });
+  }
+
+  private async applyAdjust(
+    tx: Prisma.TransactionClient,
+    product: Product,
+    userId: string,
+    type: StockMovementType,
+    quantity: number,
+    reason?: string,
+  ) {
     let nextStock: number;
     let movementQuantity: number;
     let previousStock: number | null = null;
@@ -221,12 +270,16 @@ export class StockService {
     if (nextStock < 0)
       throw new BadRequestException('Stock insuficiente para esta operación');
 
-    const status = this.resolveStatus(nextStock, product.minStock, product.status);
+    const status = this.resolveStatus(
+      nextStock,
+      product.minStock,
+      product.status,
+    );
 
-    const [movement, updatedProduct] = await this.prisma.$transaction([
-      this.prisma.stockMovement.create({
+    const [movement, updatedProduct] = await Promise.all([
+      tx.stockMovement.create({
         data: {
-          productId,
+          productId: product.id,
           type,
           quantity: movementQuantity,
           reason: reason ?? null,
@@ -234,13 +287,17 @@ export class StockService {
           createdById: userId,
         },
       }),
-      this.prisma.product.update({
-        where: { id: productId },
+      tx.product.update({
+        where: { id: product.id },
         data: { stock: nextStock, status },
       }),
     ]);
 
-    return { movement, stock: updatedProduct.stock, status: updatedProduct.status };
+    return {
+      movement,
+      stock: updatedProduct.stock,
+      status: updatedProduct.status,
+    };
   }
 
   listMovements(productId: string) {

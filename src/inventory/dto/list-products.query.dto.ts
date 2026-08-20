@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -9,6 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { ProductStatus } from '../../generated/prisma/client';
+import { PRODUCT_GAPS, type ProductGap } from '../utils/product-gaps';
 
 export class ListProductsQueryDto {
   @IsOptional()
@@ -22,6 +24,10 @@ export class ListProductsQueryDto {
   @IsOptional()
   @IsEnum(ProductStatus)
   status?: ProductStatus;
+
+  @IsOptional()
+  @IsIn(PRODUCT_GAPS)
+  gap?: ProductGap;
 
   @IsOptional()
   @Type(() => Number)

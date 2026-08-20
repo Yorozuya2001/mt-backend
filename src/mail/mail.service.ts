@@ -9,16 +9,19 @@ export class MailService {
   private readonly transporter: Transporter;
   private readonly mailFrom: string;
   private readonly appUrl: string;
-  private readonly isSmtpConfigured: boolean;
+  readonly isSmtpConfigured: boolean;
 
   constructor(private readonly configService: ConfigService) {
-    const host = this.configService.getOrThrow<string>('SMTP_HOST');
-    const port = Number(this.configService.getOrThrow<string>('SMTP_PORT'));
+    const host = this.configService.get<string>('SMTP_HOST') ?? 'localhost';
+    const port = Number(this.configService.get<string>('SMTP_PORT') ?? 25);
     const user = this.configService.get<string>('SMTP_USER') ?? '';
     const pass = this.configService.get<string>('SMTP_PASS') ?? '';
 
-    this.mailFrom = this.configService.getOrThrow<string>('MAIL_FROM');
-    this.appUrl = this.configService.getOrThrow<string>('APP_URL');
+    this.mailFrom =
+      this.configService.get<string>('MAIL_FROM') ??
+      'MT SHOP <noreply@mt.local>';
+    this.appUrl =
+      this.configService.get<string>('APP_URL') ?? 'http://127.0.0.1:3000';
     this.isSmtpConfigured = Boolean(user && pass);
 
     this.transporter = this.isSmtpConfigured

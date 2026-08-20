@@ -1,24 +1,25 @@
 import 'dotenv/config';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../src/generated/prisma/client';
 import { bootstrapAdmin } from './seeds/bootstrap-admin';
+import { seedDesktopUsers } from './seeds/desktop-users.seed';
 import { removeDemoClients, seedDevStaff } from './seeds/staff.seed';
+import { createSqlitePrismaClient } from '../src/prisma/sqlite.util';
 
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString)
-  throw new Error('DATABASE_URL no está definida en el entorno');
-
-const adapter = new PrismaPg({ connectionString });
-const prisma = new PrismaClient({ adapter });
+const { prisma } = createSqlitePrismaClient();
 
 async function main() {
   const bootstrapOnly =
     process.env.SEED_BOOTSTRAP_ONLY === '1' ||
     process.env.SEED_BOOTSTRAP_ONLY === 'true';
+  const seedDesktop =
+    process.env.SEED_DESKTOP === '1' || process.env.SEED_DESKTOP === 'true';
 
   if (bootstrapOnly) {
     await bootstrapAdmin(prisma);
+    return;
+  }
+
+  if (seedDesktop) {
+    await seedDesktopUsers(prisma);
     return;
   }
 

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
+import { getUploadsDir } from '../data-dir';
 import type { PhotoStorage, UploadedPhotoFile } from './photo-storage.interface';
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -12,15 +13,14 @@ const MIME_TO_EXT: Record<string, string> = {
 
 @Injectable()
 export class LocalPhotoStorage implements PhotoStorage {
-  private readonly uploadDir = join(process.cwd(), 'uploads');
-
   async upload(file: UploadedPhotoFile): Promise<string> {
-    await mkdir(this.uploadDir, { recursive: true });
+    const uploadDir = getUploadsDir();
+    await mkdir(uploadDir, { recursive: true });
 
     const ext =
       MIME_TO_EXT[file.mimetype] ?? (extname(file.originalname) || '.jpg');
     const filename = `${randomUUID()}${ext}`;
-    await writeFile(join(this.uploadDir, filename), file.buffer);
+    await writeFile(join(uploadDir, filename), file.buffer);
 
     return `/uploads/${filename}`;
   }

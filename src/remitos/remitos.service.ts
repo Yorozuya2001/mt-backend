@@ -154,8 +154,15 @@ export class RemitosService {
           new Prisma.Decimal(0),
         );
 
+        const lastRemito = await tx.remito.findFirst({
+          orderBy: { number: 'desc' },
+          select: { number: true },
+        });
+        const number = (lastRemito?.number ?? 0) + 1;
+
         const created = await tx.remito.create({
           data: {
+            number,
             clientId: dto.clientId ?? null,
             createdById,
             paymentMethod: dto.paymentMethod,
@@ -235,21 +242,21 @@ export class RemitosService {
 
     if (search) {
       const searchConditions: Prisma.RemitoWhereInput[] = [
-        { client: { name: { contains: search, mode: 'insensitive' } } },
-        { client: { lastName: { contains: search, mode: 'insensitive' } } },
-        { client: { email: { contains: search, mode: 'insensitive' } } },
-        { items: { some: { description: { contains: search, mode: 'insensitive' } } } },
+        { client: { name: { contains: search } } },
+        { client: { lastName: { contains: search } } },
+        { client: { email: { contains: search } } },
+        { items: { some: { description: { contains: search } } } },
         {
           items: {
             some: {
-              product: { title: { contains: search, mode: 'insensitive' } },
+              product: { title: { contains: search } },
             },
           },
         },
         {
           items: {
             some: {
-              product: { sku: { contains: search, mode: 'insensitive' } },
+              product: { sku: { contains: search } },
             },
           },
         },

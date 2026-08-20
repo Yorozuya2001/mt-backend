@@ -16,6 +16,8 @@ export type SystemInfo = {
   devFrontendPort: number;
   servesFrontend: boolean;
   mode: SystemMode;
+  appVersion: string;
+  desktop: boolean;
 };
 
 const DEV_FRONTEND_PORT = 5173;
@@ -29,9 +31,11 @@ export class SystemService {
     const lanIp = getLanIp();
     const localUrl = `http://localhost:${port}`;
     const servesFrontend = servesFrontendInProduction();
-    const mode: SystemMode = servesFrontend ? 'production' : 'development';
+    const desktop = this.configService.get<string>('MT_DESKTOP') === '1';
+    const mode: SystemMode =
+      servesFrontend || desktop ? 'production' : 'development';
     const lanApiUrl = lanIp ? `http://${lanIp}:${port}` : localUrl;
-    const shareUrl = servesFrontend
+    const shareUrl = servesFrontend || desktop
       ? lanApiUrl
       : lanIp
         ? `http://${lanIp}:${DEV_FRONTEND_PORT}`
@@ -46,8 +50,13 @@ export class SystemService {
       localUrl,
       port,
       devFrontendPort: DEV_FRONTEND_PORT,
-      servesFrontend,
+      servesFrontend: servesFrontend || desktop,
       mode,
+      appVersion:
+        this.configService.get<string>('APP_VERSION') ??
+        process.env.npm_package_version ??
+        '0.1.0',
+      desktop,
     };
   }
 }

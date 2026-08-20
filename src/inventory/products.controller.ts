@@ -31,6 +31,10 @@ import {
 } from '../storage/photo-storage.interface';
 import { ProductsXlsxExporter } from './export/products-xlsx.exporter';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
+import { BulkProductIdsDto } from './dto/bulk-product-ids.dto';
+import { BulkUpdatePriceDto } from './dto/bulk-update-price.dto';
+import { BulkUpdateProductsDto } from './dto/bulk-update-products.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ImportOptionsDto } from './dto/import-options.dto';
 import { ListProductsQueryDto } from './dto/list-products.query.dto';
@@ -61,6 +65,11 @@ export class ProductsController {
     return this.productsService.findMany(query);
   }
 
+  @Get('gaps')
+  gaps() {
+    return this.productsService.findGaps();
+  }
+
   @Get('export/xlsx')
   @Header(
     'Content-Type',
@@ -76,6 +85,40 @@ export class ProductsController {
       'attachment; filename="inventario.xlsx"',
     );
     res.send(buffer);
+  }
+
+  @Post('bulk/update')
+  bulkUpdate(@Body() dto: BulkUpdateProductsDto) {
+    return this.productsService.bulkUpdate(dto);
+  }
+
+  @Post('bulk/delete')
+  bulkDelete(@Body() dto: BulkProductIdsDto) {
+    return this.productsService.bulkDelete(dto.ids);
+  }
+
+  @Post('bulk/delete-all')
+  deleteAll() {
+    return this.productsService.deleteAll();
+  }
+
+  @Post('bulk/stock')
+  bulkStock(
+    @Body() dto: BulkAdjustStockDto,
+    @Req() req: Request & { user: AuthUser },
+  ) {
+    return this.stockService.adjustMany(
+      dto.ids,
+      req.user.id,
+      dto.type,
+      dto.quantity,
+      dto.reason,
+    );
+  }
+
+  @Post('bulk/price')
+  bulkPrice(@Body() dto: BulkUpdatePriceDto) {
+    return this.productsService.bulkUpdatePrice(dto);
   }
 
   @Get('by-barcode/:code')
@@ -103,7 +146,7 @@ export class ProductsController {
 
   @Delete(':id')
   remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.productsService.softDelete(id);
+    return this.productsService.remove(id);
   }
 
   @Post(':id/images')

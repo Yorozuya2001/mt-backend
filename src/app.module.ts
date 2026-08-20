@@ -20,7 +20,10 @@ import { UsersModule } from './users/users.module';
       {
         name: 'default',
         ttl: 60000,
-        limit: 100,
+        limit:
+          process.env.NODE_ENV === 'test'
+            ? 100000
+            : Number(process.env.THROTTLE_LIMIT ?? 1000),
       },
     ]),
     PrismaModule,

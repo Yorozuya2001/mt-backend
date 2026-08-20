@@ -23,6 +23,25 @@ type PartHeaderIndices = {
   notesIdx: number;
 };
 
+type ScannedRow = {
+  cells: unknown[];
+  rowNumber: number;
+};
+
+const HEADER_SCAN_ROWS = 5;
+
+const DEFAULT_PARTS_HEADER: PartHeaderIndices = {
+  skuIdx: 0,
+  titleIdx: 1,
+  brandIdx: 2,
+  priceIdx: 3,
+  stockIdx: 4,
+  statusIdx: 5,
+  notesIdx: 6,
+};
+
+const SKIP_SHEET_NAMES = new Set(['.', ',']);
+
 @Injectable()
 export class PartsXlsxImporter {
   private readonly logger = new Logger(PartsXlsxImporter.name);
@@ -51,7 +70,7 @@ export class PartsXlsxImporter {
       `Import parts-xlsx (${mode}): ${(buffer.length / 1024).toFixed(1)} KB`,
     );
 
-    await this.streamRows(buffer, mode, async (row) => {
+    await this.streamRows(buffer, mode, result, async (row) => {
       batch.push(row);
       if (batch.length >= IMPORT_BATCH_SIZE) await flush();
     });
@@ -68,6 +87,7 @@ export class PartsXlsxImporter {
   private async streamRows(
     buffer: Buffer,
     mode: ImportMode,
+    result: ImportResult,
     onRow: (row: PartsImportRow) => Promise<void>,
   ): Promise<void> {
     const stream = Readable.from(buffer);
@@ -83,30 +103,115 @@ export class PartsXlsxImporter {
       const categoryName = (
         (worksheetReader as StreamWorksheetReader).name ?? ''
       ).trim();
-      if (!categoryName || categoryName === '.') continue;
+      if (!categoryName || SKIP_SHEET_NAMES.has(categoryName)) continue;
 
-      if (mode === 'replace')
-        await this.batchProcessor.deleteProductsInCategory(categoryName);
+      try {
+        if (mode === 'replace')
+          await this.batchProcessor.deleteProductsInCategory(categoryName);
 
-      let header: PartHeaderIndices | null = null;
+        let rowsRead = 0;
 
-      for await (const row of worksheetReader) {
-        const values = row.values as unknown[] | undefined;
-        const cells = values ? values.slice(1) : [];
-        if (!cells.length) continue;
+        const emitRow = async (parsed: PartsImportRow | null) => {
+          if (!parsed) return;
+          rowsRead += 1;
+          await onRow(parsed);
+        };
 
-        if (!header) {
-          header = this.parseHeader(cells);
-          if (header.titleIdx === -1) break;
-          continue;
+        let header: PartHeaderIndices | null = null;
+        const scannedRows: ScannedRow[] = [];
+
+        const flushScannedRows = async (
+          resolvedHeader: PartHeaderIndices,
+          headerRowIndex: number,
+        ) => {
+          for (let i = headerRowIndex + 1; i < scannedRows.length; i++) {
+            const scanned = scannedRows[i]!;
+            await emitRow(
+              this.parseDataRow(
+                scanned.cells,
+                resolvedHeader,
+                categoryName,
+                scanned.rowNumber,
+              ),
+            );
+          }
+        };
+
+        const useDefaultHeaderForScanned = async () => {
+          header = DEFAULT_PARTS_HEADER;
+          for (const scanned of scannedRows) {
+            await emitRow(
+              this.parseDataRow(
+                scanned.cells,
+                header,
+                categoryName,
+                scanned.rowNumber,
+              ),
+            );
+          }
+          scannedRows.length = 0;
+        };
+
+        for await (const row of worksheetReader) {
+          const values = row.values as unknown[] | undefined;
+          const cells = values ? values.slice(1) : [];
+          if (!cells.length) continue;
+
+          if (!header) {
+            scannedRows.push({ cells, rowNumber: row.number });
+
+            const resolved = this.findHeaderInScannedRows(scannedRows);
+            if (resolved) {
+              header = resolved.header;
+              await flushScannedRows(header, resolved.headerRowIndex);
+              scannedRows.length = 0;
+              continue;
+            }
+
+            if (scannedRows.length >= HEADER_SCAN_ROWS)
+              await useDefaultHeaderForScanned();
+
+            continue;
+          }
+
+          await emitRow(
+            this.parseDataRow(cells, header, categoryName, row.number),
+          );
         }
 
-        const parsed = this.parseDataRow(cells, header, categoryName, row.number);
-        if (!parsed) continue;
+        if (!header && scannedRows.length) {
+          const resolved = this.findHeaderInScannedRows(scannedRows);
+          if (resolved) {
+            header = resolved.header;
+            await flushScannedRows(header, resolved.headerRowIndex);
+          } else {
+            await useDefaultHeaderForScanned();
+          }
+        }
 
-        await onRow(parsed);
+        this.logger.log(`Sheet "${categoryName}": ${rowsRead} filas leídas`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Error desconocido';
+        result.errors.push({ row: categoryName, message });
+        this.logger.warn(`Sheet "${categoryName}" omitida: ${message}`);
       }
     }
+  }
+
+  private findHeaderInScannedRows(
+    scannedRows: ScannedRow[],
+  ): { header: PartHeaderIndices; headerRowIndex: number } | null {
+    for (let i = 0; i < scannedRows.length; i++) {
+      const parsed = this.tryParseHeader(scannedRows[i]!.cells);
+      if (parsed) return { header: parsed, headerRowIndex: i };
+    }
+    return null;
+  }
+
+  private tryParseHeader(cells: unknown[]): PartHeaderIndices | null {
+    const header = this.parseHeader(cells);
+    return header.titleIdx >= 0 ? header : null;
   }
 
   private parseHeader(cells: unknown[]): PartHeaderIndices {
@@ -118,9 +223,10 @@ export class PartsXlsxImporter {
 
     return {
       skuIdx: header.findIndex(
-        (value) => value.includes('id de art') || value === 'columna 1',
+        (value) =>
+          (value ?? '').includes('id de art') || value === 'columna 1',
       ),
-      titleIdx: header.findIndex((value) => value.includes('nombre')),
+      titleIdx: header.findIndex((value) => (value ?? '').includes('nombre')),
       brandIdx: header.findIndex((value) => value === 'tipo'),
       priceIdx: header.findIndex((value) => value === 'precio'),
       stockIdx: header.findIndex((value) => value === 'stock'),

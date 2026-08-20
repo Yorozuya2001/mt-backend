@@ -1,4 +1,4 @@
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { PrismaClient, Role } from '../../src/generated/prisma/client';
 
 export async function bootstrapAdmin(prisma: PrismaClient): Promise<void> {

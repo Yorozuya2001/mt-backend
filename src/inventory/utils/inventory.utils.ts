@@ -42,3 +42,17 @@ export function decimalToNumber(value: { toNumber(): number } | number | null): 
   if (typeof value === 'number') return value;
   return value.toNumber();
 }
+
+export function roundMoney(value: number): number {
+  return Math.max(0, Math.round(value * 100) / 100);
+}
+
+export function scalePrice(
+  value: number,
+  percent: number,
+  direction: 'increase' | 'decrease',
+): number {
+  const factor =
+    direction === 'increase' ? 1 + percent / 100 : 1 - percent / 100;
+  return roundMoney(value * factor);
+}

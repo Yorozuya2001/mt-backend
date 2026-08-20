@@ -95,7 +95,8 @@ export class ImportBatchProcessor {
       );
     }
 
-    const toCreate: Prisma.ProductCreateManyInput[] = [];
+    const pendingBySku = new Map<string, Prisma.ProductCreateManyInput>();
+    const pendingByTitleKey = new Map<string, Prisma.ProductCreateManyInput>();
 
     for (const row of rows) {
       try {
@@ -123,9 +124,15 @@ export class ImportBatchProcessor {
             data,
           });
           result.updated += 1;
-        } else {
-          toCreate.push(data);
+          continue;
         }
+
+        if (row.sku) {
+          pendingBySku.set(row.sku, data);
+          continue;
+        }
+
+        pendingByTitleKey.set(`${category.id}::${row.title}`, data);
       } catch (error) {
         result.skipped += 1;
         result.errors.push({
@@ -135,13 +142,50 @@ export class ImportBatchProcessor {
       }
     }
 
+    const toCreate = [
+      ...pendingBySku.values(),
+      ...pendingByTitleKey.values(),
+    ];
+
     if (!toCreate.length) return;
 
-    const created = await this.prisma.product.createMany({
-      data: toCreate,
-      skipDuplicates: true,
-    });
-    result.created += created.count;
+    try {
+      const created = await this.prisma.product.createMany({ data: toCreate });
+      result.created += created.count;
+      return;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Error desconocido';
+      result.errors.push({ row: 'batch', message });
+    }
+
+    for (const data of toCreate) {
+      try {
+        if (data.sku) {
+          const existing = await this.prisma.product.findUnique({
+            where: { sku: data.sku },
+          });
+          if (existing) {
+            await this.prisma.product.update({
+              where: { id: existing.id },
+              data,
+            });
+            result.updated += 1;
+            continue;
+          }
+        }
+
+        await this.prisma.product.create({ data });
+        result.created += 1;
+      } catch (rowError) {
+        result.skipped += 1;
+        result.errors.push({
+          row: data.sku ?? data.title,
+          message:
+            rowError instanceof Error ? rowError.message : 'Error desconocido',
+        });
+      }
+    }
   }
 
   async processCatalogRows(rows: CatalogImportRow[], result: ImportResult): Promise<void> {
@@ -149,7 +193,8 @@ export class ImportBatchProcessor {
 
     const categoryIds = [
       ...new Set(
-        rows.map((row) => this.categoryCache.get(row.categoryName.trim())!.id),
+        rows.map((row) => this.categoryCache.get(row.categoryName.trim())!.id,
+        ),
       ),
     ];
     const titles = [...new Set(rows.map((row) => row.title))];
@@ -206,7 +251,6 @@ export class ImportBatchProcessor {
 
     const created = await this.prisma.product.createMany({
       data: toCreate,
-      skipDuplicates: true,
     });
     result.created += created.count;
   }

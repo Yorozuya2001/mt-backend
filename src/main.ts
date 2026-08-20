@@ -5,10 +5,12 @@ import { JwtService } from '@nestjs/jwt';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { join, resolve } from 'path';
+import { resolve } from 'path';
 import { AppModule } from './app.module';
 import { createUploadsAuthMiddleware } from './auth/uploads-auth.middleware';
+import { getUploadsDir } from './data-dir';
 import { resolveFrontendDist } from './system/frontend-dist.util';
+import { isLanHttpOrigin } from './system/system.utils';
 
 const API_ROUTE_PREFIXES = [
   '/auth',
@@ -36,7 +38,7 @@ async function bootstrap() {
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cookieParser());
 
-  const corsOrigins = configService
+  const configuredOrigins = configService
     .get<string>('CORS_ORIGIN')
     ?.split(',')
     .map((o) => o.trim())
@@ -49,7 +51,12 @@ async function bootstrap() {
   ];
 
   app.enableCors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (configuredOrigins.includes(origin) || isLanHttpOrigin(origin))
+        return callback(null, true);
+      return callback(null, false);
+    },
     credentials: true,
   });
 
@@ -60,7 +67,7 @@ async function bootstrap() {
   const uploadsAuth = createUploadsAuthMiddleware(jwtService, jwtSecret);
 
   app.use('/uploads', uploadsAuth);
-  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+  app.useStaticAssets(getUploadsDir(), {
     prefix: '/uploads',
   });
 
