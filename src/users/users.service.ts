@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -297,6 +298,44 @@ export class UsersService {
       data: { photoUrl },
     });
     return this.toPublicUser(updated);
+  }
+
+  async changeOwnPassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user) throw new UnauthorizedException();
+
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) throw new UnauthorizedException('La contraseña actual no es correcta');
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: await bcrypt.hash(newPassword, 10) },
+    });
+  }
+
+  async resetAdminPassword(
+    actorRole: Role,
+    targetId: string,
+    password: string,
+  ): Promise<{ message: string }> {
+    if (actorRole !== Role.SUPERADMIN)
+      throw new ForbiddenException('Solo el superadmin puede resetear contraseñas');
+
+    const target = await this.findById(targetId);
+    if (!target) throw new NotFoundException('Usuario no encontrado');
+    if (target.role !== Role.ADMIN)
+      throw new ForbiddenException('Solo se pueden resetear contraseñas de cajas');
+
+    await this.prisma.user.update({
+      where: { id: targetId },
+      data: { password: await bcrypt.hash(password, 10) },
+    });
+
+    return { message: 'Contraseña actualizada' };
   }
 
   isUniqueConstraintError(error: unknown): boolean {

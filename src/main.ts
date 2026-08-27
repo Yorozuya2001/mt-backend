@@ -35,7 +35,19 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
 
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: {
+        directives: {
+          'upgrade-insecure-requests': null,
+        },
+      },
+      crossOriginOpenerPolicy: false,
+      originAgentCluster: false,
+      strictTransportSecurity: false,
+    }),
+  );
   app.use(cookieParser());
 
   const configuredOrigins = configService

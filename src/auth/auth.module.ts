@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { Roles } from './decorators/roles.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { PresenceService } from './presence.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -42,6 +43,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtStrategy,
     JwtAuthGuard,
     RolesGuard,
+    PresenceService,
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
@@ -50,6 +52,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   exports: [
     AuthService,
     RefreshTokenService,
+    PresenceService,
     JwtAuthGuard,
     RolesGuard,
     JwtModule,

@@ -11,6 +11,7 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { BulkStockType } from './dto/bulk-adjust-stock.dto';
+import { resolveProductStatusFromStock } from './utils/product-status.util';
 
 export type RegisterSaleInput = {
   productId: string;
@@ -46,11 +47,9 @@ export class StockService {
         `Stock insuficiente para "${product.title}"`,
       );
 
-    const status = this.resolveStatus(
-      product.stock,
-      product.minStock,
-      product.status,
-    );
+    const status = resolveProductStatusFromStock(product.stock, {
+      currentStatus: product.status,
+    });
 
     if (status !== product.status)
       await tx.product.update({ where: { id: productId }, data: { status } });
@@ -73,11 +72,9 @@ export class StockService {
   ) {
     const product = await this.incrementStock(tx, productId, quantity);
 
-    const status = this.resolveStatus(
-      product.stock,
-      product.minStock,
-      product.status,
-    );
+    const status = resolveProductStatusFromStock(product.stock, {
+      currentStatus: product.status,
+    });
 
     if (status !== product.status)
       await tx.product.update({ where: { id: productId }, data: { status } });
@@ -130,11 +127,9 @@ export class StockService {
         'Stock insuficiente para anular este movimiento',
       );
 
-    const status = this.resolveStatus(
-      nextStock,
-      product.minStock,
-      product.status,
-    );
+    const status = resolveProductStatusFromStock(nextStock, {
+      currentStatus: product.status,
+    });
 
     await this.prisma.$transaction([
       this.prisma.stockMovement.update({
@@ -270,11 +265,9 @@ export class StockService {
     if (nextStock < 0)
       throw new BadRequestException('Stock insuficiente para esta operación');
 
-    const status = this.resolveStatus(
-      nextStock,
-      product.minStock,
-      product.status,
-    );
+    const status = resolveProductStatusFromStock(nextStock, {
+      currentStatus: product.status,
+    });
 
     const [movement, updatedProduct] = await Promise.all([
       tx.stockMovement.create({
@@ -319,16 +312,5 @@ export class StockService {
     if (type === StockMovementType.OUT || type === StockMovementType.SALE)
       return -quantity;
     return 0;
-  }
-
-  private resolveStatus(
-    stock: number,
-    minStock: number,
-    currentStatus: ProductStatus,
-  ): ProductStatus {
-    if (currentStatus === ProductStatus.DISCONTINUED) return currentStatus;
-    if (stock <= 0) return ProductStatus.OUT_OF_STOCK;
-    if (stock <= minStock) return ProductStatus.LOW_STOCK;
-    return ProductStatus.AVAILABLE;
   }
 }

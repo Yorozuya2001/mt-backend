@@ -1,4 +1,5 @@
 import { ProductStatus } from '../../generated/prisma/client';
+import { resolveProductStatusFromStock } from './product-status.util';
 
 export function slugify(value: string): string {
   const slug = value
@@ -32,9 +33,8 @@ export function mapEstadoToStatus(
   if (normalized.includes('no disponible')) return ProductStatus.DISCONTINUED;
   if (normalized.includes('volver a comprar')) return ProductStatus.LOW_STOCK;
   if (normalized.includes('en stock')) return ProductStatus.AVAILABLE;
-  if (stock <= 0) return ProductStatus.OUT_OF_STOCK;
-  if (stock <= minStock) return ProductStatus.LOW_STOCK;
-  return ProductStatus.AVAILABLE;
+  void minStock;
+  return resolveProductStatusFromStock(stock);
 }
 
 export function decimalToNumber(value: { toNumber(): number } | number | null): number | null {

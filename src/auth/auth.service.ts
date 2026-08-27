@@ -101,6 +101,20 @@ export class AuthService {
     return this.usersService.toPublicUser(user);
   }
 
+  async changeOwnPassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    await this.usersService.changeOwnPassword(
+      userId,
+      currentPassword,
+      newPassword,
+    );
+    await this.refreshTokenService.revokeAllForUser(userId);
+    return { message: 'Contraseña actualizada. Volvé a iniciar sesión.' };
+  }
+
   private async signAccessToken(
     userId: string,
     email: string,

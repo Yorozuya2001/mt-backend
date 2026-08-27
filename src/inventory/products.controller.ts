@@ -38,6 +38,7 @@ import { BulkUpdateProductsDto } from './dto/bulk-update-products.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ImportOptionsDto } from './dto/import-options.dto';
 import { ListProductsQueryDto } from './dto/list-products.query.dto';
+import { PosSearchQueryDto } from './dto/pos-search.query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CatalogCsvImporter } from './import/catalog-csv.importer';
 import { PartsXlsxImporter } from './import/parts-xlsx.importer';
@@ -124,6 +125,11 @@ export class ProductsController {
   @Get('by-barcode/:code')
   findByBarcode(@Param('code') code: string) {
     return this.productsService.findByBarcode(code);
+  }
+
+  @Get('pos-search')
+  searchForPos(@Query() query: PosSearchQueryDto) {
+    return this.productsService.searchForPos(query);
   }
 
   @Get(':id')

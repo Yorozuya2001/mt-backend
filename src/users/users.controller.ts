@@ -21,6 +21,7 @@ import { memoryStorage } from 'multer';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { RefreshTokenService } from '../auth/refresh-token.service';
 import type { AuthUser } from '../auth/strategies/jwt.strategy';
 import { Role } from '../generated/prisma/client';
 import {
@@ -29,6 +30,7 @@ import {
 } from '../storage/photo-storage.interface';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
+import { ResetUserPasswordDto } from './dto/reset-user-password.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -41,6 +43,7 @@ const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
+    private readonly refreshTokenService: RefreshTokenService,
     @Inject(PHOTO_STORAGE) private readonly photoStorage: PhotoStorage,
   ) {}
 
@@ -65,6 +68,22 @@ export class UsersController {
     @Req() req: Request & { user: AuthUser },
   ) {
     return this.usersService.updateProfile(req.user.role, id, dto);
+  }
+
+  @Patch(':id/password')
+  @Roles(Role.SUPERADMIN)
+  async resetPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ResetUserPasswordDto,
+    @Req() req: Request & { user: AuthUser },
+  ) {
+    const result = await this.usersService.resetAdminPassword(
+      req.user.role,
+      id,
+      dto.password,
+    );
+    await this.refreshTokenService.revokeAllForUser(id);
+    return result;
   }
 
   @Delete(':id')

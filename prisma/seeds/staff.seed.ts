@@ -44,6 +44,7 @@ export async function seedDevStaff(prisma: PrismaClient): Promise<void> {
     await prisma.user.upsert({
       where: { email: entry.email },
       update: {
+        password: passwordHash,
         name: entry.name,
         lastName: entry.lastName,
         role: entry.role,

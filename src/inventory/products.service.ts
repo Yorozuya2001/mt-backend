@@ -19,11 +19,19 @@ import type { CreateProductDto } from './dto/create-product.dto';
 import type { ListProductsQueryDto } from './dto/list-products.query.dto';
 import type { UpdateProductDto } from './dto/update-product.dto';
 import { decimalToNumber, scalePrice } from './utils/inventory.utils';
+import type { PosSearchQueryDto } from './dto/pos-search.query.dto';
 import {
   PRODUCT_GAPS,
   gapWhere,
   type ProductGapsCounts,
 } from './utils/product-gaps';
+import { resolveStatusForSave } from './utils/product-status.util';
+import {
+  matchesProductTokens,
+  normalizeSearchText,
+  sortProductsForPosSearch,
+  tokenizeQuery,
+} from './utils/product-search.util';
 
 export type PublicProductImage = {
   id: string;
@@ -225,12 +233,64 @@ export class ProductsService {
       where: { sku: trimmed },
       include,
     });
-    if (!bySku) throw new NotFoundException('Producto no encontrado');
-    return this.toPublicProduct(bySku);
+    if (bySku) return this.toPublicProduct(bySku);
+
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Product
+      WHERE (barcode IS NOT NULL AND LOWER(barcode) = LOWER(${trimmed}))
+         OR (sku IS NOT NULL AND LOWER(sku) = LOWER(${trimmed}))
+      LIMIT 1
+    `;
+    if (!rows[0]) throw new NotFoundException('Producto no encontrado');
+
+    const product = await this.prisma.product.findUnique({
+      where: { id: rows[0].id },
+      include,
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    return this.toPublicProduct(product);
+  }
+
+  async searchForPos(query: PosSearchQueryDto): Promise<PublicProduct[]> {
+    const normalizedQuery = normalizeSearchText(query.q);
+    const tokens = tokenizeQuery(query.q);
+    if (!tokens.length) return [];
+
+    const limit = query.limit ?? 8;
+    const tokenFilters = tokens.map((token) => ({
+      OR: [
+        { title: { contains: token } },
+        { brand: { contains: token } },
+        { sku: { contains: token } },
+      ],
+    }));
+
+    const candidates = await this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        AND: tokenFilters,
+      },
+      include: {
+        category: true,
+        images: { orderBy: { sortOrder: 'asc' } },
+      },
+      take: 50,
+    });
+
+    return sortProductsForPosSearch(
+      candidates.filter((product) => matchesProductTokens(product, tokens)),
+      normalizedQuery,
+      tokens,
+    )
+      .slice(0, limit)
+      .map((product) => this.toPublicProduct(product));
   }
 
   async create(dto: CreateProductDto): Promise<PublicProduct> {
     try {
+      const stock = dto.stock ?? 0;
+      const status = resolveStatusForSave(stock, dto.status);
+
       const product = await this.prisma.product.create({
         data: {
           categoryId: dto.categoryId,
@@ -245,9 +305,9 @@ export class ProductsService {
           brand: dto.brand?.trim() || null,
           sku: dto.sku?.trim() || null,
           barcode: dto.barcode?.trim() || null,
-          stock: dto.stock ?? 0,
+          stock,
           minStock: dto.minStock ?? 0,
-          status: dto.status ?? ProductStatus.AVAILABLE,
+          status,
         },
         include: {
           category: true,
@@ -263,9 +323,15 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto): Promise<PublicProduct> {
-    await this.ensureExists(id);
+    const existing = await this.ensureExists(id);
 
     try {
+      const stock = dto.stock ?? existing.stock;
+      const status = resolveStatusForSave(
+        stock,
+        dto.status ?? (existing.status as ProductStatus),
+      );
+
       const product = await this.prisma.product.update({
         where: { id },
         data: {
@@ -286,7 +352,7 @@ export class ProductsService {
           barcode: dto.barcode,
           stock: dto.stock,
           minStock: dto.minStock,
-          status: dto.status,
+          status,
           isActive: dto.isActive,
         },
         include: {

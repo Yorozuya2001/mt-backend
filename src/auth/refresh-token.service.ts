@@ -131,6 +131,13 @@ export class RefreshTokenService {
     });
   }
 
+  async revokeAllForUser(userId: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   private async findValidToken(rawToken: string) {
     const tokenHash = this.hashToken(rawToken);
     const record = await this.prisma.refreshToken.findUnique({

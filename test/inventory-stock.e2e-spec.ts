@@ -81,6 +81,93 @@ describe('Inventory and stock (e2e)', () => {
     expect(found.body.id).toBe(productId);
   });
 
+  it('finds product by SKU case-insensitively', async () => {
+    const found = await request(app.getHttpServer())
+      .get('/products/by-barcode/fo-001')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(found.body.id).toBe(productId);
+  });
+
+  it('searches products for POS by name', async () => {
+    const found = await request(app.getHttpServer())
+      .get('/products/pos-search')
+      .query({ q: 'filtro aceite' })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(found.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: productId, title: 'Filtro de aceite' }),
+      ]),
+    );
+  });
+
+  it('rejects POS search shorter than 2 characters', async () => {
+    await request(app.getHttpServer())
+      .get('/products/pos-search')
+      .query({ q: 'f' })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+  });
+
+  it('assigns LOW_STOCK when creating a product with 2 units', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        categoryId,
+        title: 'Filtro bajo stock',
+        price: 5,
+        stock: 2,
+      })
+      .expect(201);
+
+    expect(created.body.status).toBe('LOW_STOCK');
+  });
+
+  it('assigns OUT_OF_STOCK when creating a product with 0 units', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        categoryId,
+        title: 'Filtro agotado',
+        price: 5,
+        stock: 0,
+      })
+      .expect(201);
+
+    expect(created.body.status).toBe('OUT_OF_STOCK');
+  });
+
+  it('assigns OUT_OF_STOCK after adjusting stock down to zero', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        categoryId,
+        title: 'Filtro para ajuste cero',
+        price: 5,
+        stock: 5,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/products/${created.body.id}/stock/adjust`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'OUT', quantity: 5, reason: 'inventario' })
+      .expect(201);
+
+    const product = await request(app.getHttpServer())
+      .get(`/products/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(product.body.stock).toBe(0);
+    expect(product.body.status).toBe('OUT_OF_STOCK');
+  });
+
   it('adjusts stock IN and OUT', async () => {
     await request(app.getHttpServer())
       .post(`/products/${productId}/stock/adjust`)
